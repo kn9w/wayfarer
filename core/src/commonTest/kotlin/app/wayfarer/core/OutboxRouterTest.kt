@@ -171,6 +171,33 @@ class OutboxRouterTest {
         }
 
     @Test
+    fun `browsing a named relay still goes through the permission gate`() =
+        runTest {
+            val allowed = relay("allowed.example")
+            val notAllowed = relay("not-allowed.example")
+            val directory = RelayDirectory(FakeClock())
+            directory.approve(allowed, read = true, write = false)
+            val router = OutboxRouter(RelayListCache(), directory)
+
+            val plan = router.relayPlanFor(listOf(allowed, notAllowed), kinds = listOf(1), limitPerRelay = 20)
+
+            // "The user asked for this relay" is not a way around the gate: the
+            // unapproved one is filed for a decision rather than queried.
+            assertEquals(setOf(allowed), plan.keys)
+            assertTrue(notAllowed in directory.pending)
+            assertEquals(null, plan.getValue(allowed).single().authors)
+        }
+
+    @Test
+    fun `browsing with nothing approved plans nothing`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            val router = OutboxRouter(RelayListCache(), directory)
+
+            assertTrue(router.relayPlanFor(listOf(relay("somewhere.example")), kinds = listOf(1)).isEmpty())
+        }
+
+    @Test
     fun `the read plan respects the relay budget`() =
         runTest {
             val directory = RelayDirectory(FakeClock())

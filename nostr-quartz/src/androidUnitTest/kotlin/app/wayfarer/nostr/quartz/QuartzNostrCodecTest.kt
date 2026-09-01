@@ -245,6 +245,34 @@ class QuartzNostrCodecTest {
     }
 
     @Test
+    fun `an nprofile keeps the relays it names, and an npub has none to keep`() {
+        val hint = com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl("wss://hinted.example/")
+        val nprofile = com.vitorpamplona.quartz.nip19Bech32.entities.NProfile.create(pubKey.hex, listOf(hint))
+
+        val fromProfile = bech32.decodeProfileRef(nprofile)
+        assertEquals(pubKey, fromProfile?.pubKey)
+        assertEquals(listOf("wss://hinted.example/"), fromProfile?.relayHints)
+
+        // The distinction the onboarding flow turns on: a bare npub names nowhere
+        // to look, which is why finding that person means querying relays the user
+        // has to be asked about first.
+        val fromNpub = bech32.decodeProfileRef(bech32.encodeNpub(pubKey))
+        assertEquals(pubKey, fromNpub?.pubKey)
+        assertTrue(fromNpub?.relayHints.isNullOrEmpty())
+
+        assertNull(bech32.decodeProfileRef("not a key"))
+    }
+
+    @Test
+    fun `an nprofile with relay hints is accepted wherever a key is`() {
+        val hint = com.vitorpamplona.quartz.nip01Core.relay.normalizer.NormalizedRelayUrl("wss://hinted.example/")
+        val nprofile = com.vitorpamplona.quartz.nip19Bech32.entities.NProfile.create(pubKey.hex, listOf(hint))
+
+        assertEquals(pubKey, bech32.decodePubKey(nprofile))
+        assertEquals(pubKey, bech32.decodeProfileRef("nostr:$nprofile")?.pubKey)
+    }
+
+    @Test
     fun `relay urls that name the same relay collapse to one permission key`() {
         val upper = quartzRelayUrlNormalizer.normalize("wss://Relay.Example.com")
         val lower = quartzRelayUrlNormalizer.normalize("wss://relay.example.com/")

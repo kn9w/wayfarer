@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,6 +35,7 @@ import app.wayfarer.core.model.Profile
 fun HomeScreen(controller: AppController) {
     val feed by controller.feed.collectAsStateWithLifecycle()
     val articles by controller.articles.collectAsStateWithLifecycle()
+    val account by controller.account.collectAsStateWithLifecycle()
     var lookup by remember { mutableStateOf("") }
 
     LazyColumn(
@@ -45,7 +48,7 @@ fun HomeScreen(controller: AppController) {
                 OutlinedTextField(
                     value = lookup,
                     onValueChange = { lookup = it },
-                    label = { Text("Look up an npub") },
+                    label = { Text("Find someone by npub") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
@@ -59,6 +62,32 @@ fun HomeScreen(controller: AppController) {
         item {
             OutlinedButton(onClick = { controller.refreshFeed() }, modifier = Modifier.fillMaxWidth()) {
                 Text("Refresh")
+            }
+        }
+
+        // What this feed actually is. Browsing a relay and reading your follows
+        // are different claims, and a new account is always doing the first.
+        if (feed.loaded && feed.browsingRelays.isNotEmpty()) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            if (account == null) {
+                                "You are reading without an account, so this is simply what is on the relays " +
+                                    "you allowed — not a feed of anyone in particular."
+                            } else {
+                                "You do not follow anyone yet, so this is what is on the relays you allowed " +
+                                    "rather than a feed of people you chose."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Find someone by pasting their npub above. Wayfarer does not have a directory to " +
+                                "search — nobody does.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
         }
 
@@ -80,10 +109,25 @@ fun HomeScreen(controller: AppController) {
 
         if (feed.loaded && feed.notes.isEmpty()) {
             item {
-                Text(
-                    "Nothing here yet. Approve some relays, then follow someone — or post the first note yourself.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Nothing to show yet", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (feed.relaysQueried == 0) {
+                                "Wayfarer is not allowed to talk to any relay, so it has nowhere to read from. " +
+                                    "Allowing one is the whole of the setup."
+                            } else {
+                                "The relays you allowed returned nothing. Try another relay, or look somebody " +
+                                    "up by npub above and read them directly."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(onClick = { controller.go(Screen.Relays) }) { Text("Choose relays") }
+                    }
+                }
             }
         }
 
@@ -107,7 +151,14 @@ fun HomeScreen(controller: AppController) {
             )
         }
 
-        if (feed.loaded) {
+        if (feed.loaded && feed.browsingRelays.isNotEmpty()) {
+            item {
+                Text(
+                    "Read directly from ${feed.relaysQueried} relay(s) you allowed.",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        } else if (feed.loaded) {
             item {
                 Text(
                     "Queried ${feed.relaysQueried} relays, chosen from where these authors say they publish." +

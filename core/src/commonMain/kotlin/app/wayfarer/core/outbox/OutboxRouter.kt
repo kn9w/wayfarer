@@ -193,6 +193,29 @@ class OutboxRouter(
     }
 
     /**
+     * Asks named relays directly, for the one case the outbox model has no
+     * opinion about: the user has pointed at a relay and wants to see what is on
+     * it.
+     *
+     * Not a hole in the routing rules — it is still the directory that decides
+     * whether each relay may be read, and the plan can only ever name relays the
+     * user approved. What it skips is the *author* half: there is no author to
+     * route by, which is exactly why the UI has to label this as browsing one
+     * relay rather than as a routed feed.
+     */
+    suspend fun relayPlanFor(
+        relays: Collection<RelayUrl>,
+        kinds: List<Int>,
+        limitPerRelay: Int? = null,
+        since: Long? = null,
+    ): Map<RelayUrl, List<ReqFilter>> {
+        val allowed = directory.readable(relays, DiscoveryReason(DiscoverySource.USER_ENTERED, "you asked to browse it"))
+        if (allowed.isEmpty()) return emptyMap()
+        val filter = ReqFilter(kinds = kinds, since = since, limit = limitPerRelay)
+        return allowed.associateWith { listOf(filter) }
+    }
+
+    /**
      * Where to look for things we cannot route yet — an author's kind 10002 and
      * kind 0 when we have never seen either. Uses every approved read relay,
      * because by definition there is no better-informed choice available.

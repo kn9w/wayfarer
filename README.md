@@ -5,12 +5,26 @@ explicitly approved by the user.
 
 ## Features
 
+- **Onboarding that explains itself** — "New to nostr?" leads to three plain-language screens on
+  keys and relays, then offers an account and an equally weighted "not for now". Reading needs no
+  key, so browsing without an account is a supported way to use the app rather than a dead end.
 - Create an account, or log in with an `npub` (watch-only), an `nsec`, or an external signer app.
+- **Your key stays reachable** — the `nsec` is encrypted by an `AndroidKeyStore` key, shown once at
+  setup on a screen with no way to leave it by accident, and readable again in Settings behind the
+  device's own lock screen.
 - View and publish profiles, short notes, and long-form articles.
 - **Outbox routing (NIP-65)** — notes are read from the relays their authors publish to, and
   published to your write relays plus the read relays of everyone you mention.
 - **Deny-by-default relay permissions** — no socket opens to a relay you have not approved. Read
-  and write are granted separately, and relays the app wanted are queued with the reason why.
+  and write are granted separately, and relays the app wanted are queued with the reason why. The
+  permission list is local to the device: changing it publishes nothing.
+- **Your NIP-65 relay list, edited where it belongs** — a "where others find you" section on your
+  own profile, with its own screen for the public kind 10002: what is advertised, what each entry
+  means, what becomes public, and a *Why does this matter?* explainer. Publishing is always an
+  explicit press.
+- **Nothing is queried behind your back** — whenever the app would have to fall back to the relays
+  it ships with, it names them first and offers a field to use one of your own instead. Starting
+  points can be typed or scanned from a QR code.
 
 ## Architecture
 
@@ -32,6 +46,39 @@ Dependencies run strictly `app → nostr-quartz → core`. The core declares `No
 passes through it, and rejected relays are recorded as *pending* with the reason they were wanted
 ("write relay of npub1abc…", "your read relay"), so the approval queue reflects your own social
 graph rather than a list the app invented.
+
+**This list is local to the app.** It is not a NIP-65 relay list, it is not an event, and approving
+or blocking a relay publishes nothing and tells nobody. Advertising your relays to the network is a
+separate, explicitly requested action — see *Outbox* below — and the screen says so where the
+buttons are. (If that list ever becomes shared between a user's own devices, the natural shape is an
+encrypted private event, which is still not the same thing as NIP-65.)
+
+Approving a relay reloads whatever is on screen against the new permission. It is the one thing
+standing between a new user and the posts they are waiting for, so it is not left to them to
+discover that a Refresh button now does something different.
+
+## The two relay lists
+
+They are easy to confuse and mean opposite things, so the app keeps them in separate screens, with
+separate view models, and says on each what the other is.
+
+| | Relay permissions | Relay list (NIP-65) |
+|---|---|---|
+| Question it answers | What may this app connect to? | Where should people look for me? |
+| Where it lives | This phone, in app settings | A signed kind 10002 on the network |
+| Who can see it | Nobody | Anyone |
+| Reached from | The Relays tab | Your own profile → *Where others find you* |
+| Changing it | Opens or closes connections here | Publishes nothing until you press Publish |
+
+The editor is a draft until published, and says so: with no kind 10002 yet, it offers the relays
+you allow here as a *starting point* rather than presenting them as a fact about you. A relay can
+be in one list and not the other — advertising a relay this app may not reach is legal and usually
+a mistake, so the row says so and offers to allow it here too, one relay at a time. There is no
+automatic bridge in either direction.
+
+Someone else's advertised list is shown on their profile as well, from the cache outbox routing
+already fills — no extra fetch, and it is the thing that explains why their posts are reachable or
+guessed at.
 
 The gate is enforced twice: at routing, where `OutboxRouter` will not name an unapproved relay in
 any plan, and at the socket, where `GatedWebsocketBuilder` refuses to dial one. The second check
@@ -61,11 +108,11 @@ names the host first.
 | [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. |
 | [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. No thread view. |
 | [11](https://github.com/nostr-protocol/nips/blob/master/11.md) | Relay information | Fetched on explicit request; shows supported NIPs, software, auth/payment requirements, posting policy. |
-| [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode, `note` encode. |
+| [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode **with its relay hints kept**, `note` encode. Hints are offered for approval, never used on the strength of the link alone. |
 | [21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URIs | Accepted wherever a key is parsed, and when scanning notes for mentions. |
 | [23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content (kind 30023) | Read and authoring. Addressable: the `d` tag is preserved across edits so a revision replaces rather than duplicates. Markdown bodies render as plain text. |
 | [55](https://github.com/nostr-protocol/nips/blob/master/55.md) | Android signer application | Intent transport only (`get_public_key`, `sign_event`). The Content Resolver transport exists for background signing, which this app never does. |
-| [65](https://github.com/nostr-protocol/nips/blob/master/65.md) | Relay list metadata (kind 10002) | Full, and central. Read for every author routed to; published from your approved relay grants. |
+| [65](https://github.com/nostr-protocol/nips/blob/master/65.md) | Relay list metadata (kind 10002) | Full, and central. Read for every author routed to. Your own is edited and published on its own screen, reached from your profile — read and write markers per relay, replacing the previous list. |
 
 Planned: **NIP-46** (remote `bunker://` signing). Quartz already provides the client, and it would
 be a second `EventSigner` — but a bunker URI carries relay URLs, so those relays have to go through
@@ -107,11 +154,18 @@ secp256k1-kmp with JNI natives, androidx.sqlite plus a bundled SQLite, kotlinx-s
 storage, sync or chess parts are used. The interfaces in `core/nostr/` are the exit: a replacement
 backend would cut the dependency list to a schnorr implementation and a websocket client.
 
-Beyond Quartz the app adds only Compose, androidx activity/lifecycle/core-ktx and OkHttp. There is
-no navigation library, image loader, DI framework, markdown renderer, or JSON library in `core`.
+Beyond Quartz the app adds Compose, androidx activity/lifecycle/core-ktx, OkHttp, and — for the QR
+scanner alone — CameraX and `com.google.zxing:core`, a pure-Java decoder with no transitive
+dependencies of its own. There is no navigation library, image loader, DI framework, markdown
+renderer, or JSON library in `core`.
+
 The account key is encrypted with an `AndroidKeyStore` AES-GCM key in about sixty lines of standard
-JCA rather than depending on the deprecated `androidx.security:security-crypto`. The app requests
-one permission: `INTERNET`.
+JCA rather than depending on the deprecated `androidx.security:security-crypto`, and showing it
+again goes through `KeyguardManager` rather than pulling in `androidx.biometric` for one call.
+
+The app requests two permissions. `INTERNET`, and `CAMERA` for the QR scanner — asked for when that
+screen opens, declared `required="false"` so a device without a camera still installs, and used by
+one non-exported activity that decodes frames in memory and stores nothing.
 
 ## Building
 
@@ -125,18 +179,22 @@ non-UI modules, because Quartz depends on androidx artifacts published only ther
 
 ## Status
 
-`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 86 unit tests
+`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 114 unit tests
 covering the relay gate, the set-cover router, NIP-11 consent, NIP-23 addressable replacement, the
-NIP-55 wire format, the controller wiring, and round-trips through real secp256k1 signing and real
+NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its separation from the local
+permission list, the onboarding sequence — including that a first launch
+queries nothing, that the key screen is unreachable from the tab bar, and that logging in asks
+before touching the app's own relays — and round-trips through real secp256k1 signing and real
 Quartz parsing.
 
 The full Android build has not been run: `dl.google.com` was unreachable from the machine this was
 written on, so no androidx artifact or Android SDK could be fetched. The modules were verified by
 compiling against `quartz-jvm` and Compose Multiplatform, which mirror the same APIs, on a plain
-JVM. Five files touching Android-only APIs are therefore unverified — `MainActivity`,
-`WayfarerApplication`, `AndroidStores`, `Nip55Bridge` and `AppSignerFactory` — as are the AGP,
-`compileSdk` and Compose BOM versions in `gradle/libs.versions.toml`.
+JVM. Seven files touching Android-only APIs are therefore unverified — `MainActivity`,
+`WayfarerApplication`, `AndroidStores`, `Nip55Bridge`, `AppSignerFactory`, `DeviceAuthBridge` and
+`QrScan` (the CameraX viewfinder in particular) — as are the AGP, `compileSdk`, Compose BOM and
+CameraX versions in `gradle/libs.versions.toml`.
 
 ## License
 
-MIT, matching Quartz.
+MIT.

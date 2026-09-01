@@ -31,6 +31,24 @@ fun ComposeNoteScreen(controller: AppController) {
         modifier = Modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Reading needs no key, so a signed-out user is browsing rather than
+        // locked out. This is the one place that distinction has consequences.
+        if (account == null) {
+            Text("Posting needs an account", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "A post has to be signed by a key, and you are reading without one. Making an account takes a " +
+                    "moment and nothing you have done so far is lost.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = controller::beginIntroduction, modifier = Modifier.fillMaxWidth()) {
+                Text("Set up an account")
+            }
+            TextButton(onClick = controller::goToSignIn, modifier = Modifier.fillMaxWidth()) {
+                Text("Log in with a key I already have")
+            }
+            return@Column
+        }
+
         if (account?.canSign == false) {
             Text(
                 "This account was added with an npub, so it holds no key and cannot publish. " +

@@ -16,6 +16,7 @@ import app.wayfarer.core.repo.AccountManager
 import app.wayfarer.core.repo.ArticleRepository
 import app.wayfarer.core.repo.ContactRepository
 import app.wayfarer.core.repo.FeedRepository
+import app.wayfarer.core.repo.OnboardingStore
 import app.wayfarer.core.repo.ProfileRepository
 import app.wayfarer.core.repo.RelayListRepository
 import app.wayfarer.core.repo.SignerFactory
@@ -70,6 +71,13 @@ class Wayfarer private constructor(
     val relayListRepo: RelayListRepository,
     val normalizer: RelayUrlNormalizer,
     val bech32: Bech32Codec,
+    val onboarding: OnboardingStore,
+    /**
+     * The relays this build ships with, normalized. Named here so onboarding can
+     * say which relays it would have to query before it queries them — the list
+     * outlives its pending entries, which disappear as soon as the user decides.
+     */
+    val suggestedRelays: List<RelayUrl>,
 ) {
     companion object {
         /**
@@ -104,7 +112,8 @@ class Wayfarer private constructor(
                     initial = directoryStore.load(),
                     persistence = directoryStore,
                 )
-            directory.suggest(bootstrapSuggestions.mapNotNull(backend.normalizer::normalize))
+            val suggested = bootstrapSuggestions.mapNotNull(backend.normalizer::normalize)
+            directory.suggest(suggested)
 
             val transport = backend.transportFactory(directory)
             val relayListCache = RelayListCache()
@@ -143,6 +152,8 @@ class Wayfarer private constructor(
                 relayListRepo = relayListRepo,
                 normalizer = backend.normalizer,
                 bech32 = backend.bech32,
+                onboarding = OnboardingStore(settings),
+                suggestedRelays = suggested,
             )
         }
     }
