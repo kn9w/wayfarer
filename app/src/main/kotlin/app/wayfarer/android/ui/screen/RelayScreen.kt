@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -40,9 +41,14 @@ import app.wayfarer.core.relay.RelayInfoService
 /**
  * The relay permission screen — the app's most important surface.
  *
- * Three sections, matching the three states a relay can be in: approved (with
- * independent read and write switches), awaiting approval (with the reason the
- * app wanted it), and refused.
+ * Three sections, matching the three states a relay can be in: allowed (with
+ * independent read and post switches), waiting for a decision (with the reason
+ * the app wanted it), and blocked.
+ *
+ * The wording carries as much weight as the switches. "Read or read + write for
+ * nos.lol?" is a question only somebody who already knows what a relay is can
+ * answer, so every control here says what it *does* — download posts from this
+ * server, put your posts on it — rather than naming the permission.
  */
 @Composable
 fun RelayScreen(controller: AppController) {
@@ -50,8 +56,10 @@ fun RelayScreen(controller: AppController) {
     val connected by controller.connectedRelays.collectAsStateWithLifecycle()
     val relayInfo by controller.relayInfo.collectAsStateWithLifecycle()
     val infoPrompt by controller.relayInfoPrompt.collectAsStateWithLifecycle()
+    val offerRelayList by controller.shouldOfferRelayListPublish.collectAsStateWithLifecycle()
 
     var newRelay by remember { mutableStateOf("") }
+    var explaining by remember { mutableStateOf(false) }
 
     // Reading a relay's NIP-11 document is an HTTPS request to that relay. For a
     // relay the user has not approved, that is a connection they have not
@@ -62,17 +70,35 @@ fun RelayScreen(controller: AppController) {
             title = { Text("Contact ${url.display()}?") },
             text = {
                 Text(
-                    "Reading this relay's information document opens an HTTPS connection to " +
-                        "${url.display()}. The relay is not approved: nothing will be published to it and " +
-                        "no notes will be fetched from it, but it will see this request and your IP address.",
+                    "To describe itself, this server has to be asked. That opens a connection to " +
+                        "${url.display()}: it will see the request and your IP address. It is not allowed to " +
+                        "do anything else — no posts are sent to it, and none are fetched from it.",
                 )
             },
             confirmButton = {
-                Button(onClick = controller::confirmRelayInfoFetch) { Text("Fetch info") }
+                Button(onClick = controller::confirmRelayInfoFetch) { Text("Ask it") }
             },
             dismissButton = {
                 TextButton(onClick = controller::dismissRelayInfoPrompt) { Text("Cancel") }
             },
+        )
+    }
+
+    if (explaining) {
+        AlertDialog(
+            onDismissRequest = { explaining = false },
+            title = { Text("What is a relay?") },
+            text = {
+                Text(
+                    "A relay is a server that keeps posts and hands them out. Nostr has no central one: there " +
+                        "are hundreds, run by different people, and you choose which ones this app uses.\n\n" +
+                        "Reading from a relay means asking it for other people's posts. Posting to a relay " +
+                        "means putting yours there, where anyone who reads that relay can find them.\n\n" +
+                        "Most people read from several and post to two or three. If you are not sure, allow " +
+                        "reading first — you can always allow posting later.",
+                )
+            },
+            confirmButton = { TextButton(onClick = { explaining = false }) { Text("Got it") } },
         )
     }
 
@@ -82,21 +108,32 @@ fun RelayScreen(controller: AppController) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
-            Text(
-                "Wayfarer opens a connection only to relays listed as approved below. " +
-                    "Everything else it is asked to reach — by your relay list, by the people you follow, " +
-                    "by a relay hint on an event — waits here until you decide.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Relays are the servers that hold nostr posts. Wayfarer connects to the ones you allow " +
+                        "here, and to nothing else — not on startup, not in the background.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "This list lives on this phone. Changing it publishes nothing and tells nobody.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = { explaining = true }) { Text("What is a relay?") }
+            }
         }
 
-        item {
-            SectionHeader("Approved", state.approved.size)
+        // Approving a relay reloads the feed on its own, so what is missing after
+        // a change is a genuinely missing thing rather than a stale screen.
+        if (offerRelayList) {
+            item { RelayListPrompt(onPublish = controller::openRelayList) }
         }
+
+        item { SectionHeader("Allowed", state.approved.size) }
         if (state.approved.isEmpty()) {
             item {
                 Text(
-                    "Nothing approved yet, so nothing is connected. Approve a relay below to start.",
+                    "Nothing is allowed yet, so Wayfarer is connected to nothing and the feed is empty. " +
+                        "Allow one below to start.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -113,7 +150,13 @@ fun RelayScreen(controller: AppController) {
         }
 
         item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-        item { SectionHeader("Awaiting your approval", state.pending.size) }
+        item { SectionHeader("Waiting for you", state.pending.size) }
+        item {
+            Text(
+                "Relays something asked for and Wayfarer has not touched. Nothing has been sent to these.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         if (state.pending.isEmpty()) {
             item { Text("Nothing waiting.", style = MaterialTheme.typography.bodyMedium) }
         }
@@ -129,11 +172,17 @@ fun RelayScreen(controller: AppController) {
 
         if (state.denied.isNotEmpty()) {
             item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-            item { SectionHeader("Refused", state.denied.size) }
+            item { SectionHeader("Blocked", state.denied.size) }
+            item {
+                Text(
+                    "Wayfarer will not connect to these, and stops asking about them.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             items(state.denied, key = { it.url }) { url ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(url.display(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { controller.relays.forget(url) }) { Text("Un-refuse") }
+                    TextButton(onClick = { controller.relays.forget(url) }) { Text("Unblock") }
                 }
             }
         }
@@ -156,14 +205,14 @@ fun RelayScreen(controller: AppController) {
                             newRelay = ""
                         },
                         enabled = newRelay.isNotBlank(),
-                    ) { Text("Add for reading") }
+                    ) { Text("Read only") }
                     Button(
                         onClick = {
                             controller.relays.add(newRelay, read = true, write = true)
                             newRelay = ""
                         },
                         enabled = newRelay.isNotBlank(),
-                    ) { Text("Add for read + write") }
+                    ) { Text("Read and post") }
                 }
             }
         }
@@ -171,17 +220,38 @@ fun RelayScreen(controller: AppController) {
         item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Advertise these relays (NIP-65)", style = MaterialTheme.typography.titleSmall)
+                Text("Not to be confused with: where others find you", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "Publishes a kind 10002 saying you read from your read relays and publish to your write relays. " +
-                        "This is how other people's clients find your notes, so publish it after any change here.",
+                    "There is a second, entirely separate list — the public one (NIP-65) that tells other " +
+                        "people's apps where your posts are and where to reach you. Nothing on this screen is " +
+                        "published, and editing that one changes nothing here.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Button(
-                    onClick = { controller.relays.publishRelayList() },
-                    enabled = state.approved.isNotEmpty(),
-                ) { Text("Publish my relay list") }
+                OutlinedButton(onClick = controller::openRelayList) { Text("Manage where others find me") }
             }
+        }
+    }
+}
+
+/**
+ * The nudge that used to be missing entirely: relays are allowed, posting works,
+ * and yet nobody can find the posts because no kind 10002 exists.
+ */
+@Composable
+private fun RelayListPrompt(onPublish: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("One thing left", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "You can post, but nobody knows where to look for your posts yet. A public relay list tells " +
+                    "other people's apps which relays you use — it is one small signed note, and without it " +
+                    "only people who already share a relay with you will see anything you write.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = onPublish) { Text("Set up where others find me") }
         }
     }
 }
@@ -207,26 +277,41 @@ private fun ApprovedRelayCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(grant.url.display(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
             Text(
-                if (isConnected) "connected" else "not connected",
+                if (isConnected) "connected now" else "not connected right now",
                 style = MaterialTheme.typography.labelSmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(
                     selected = grant.read,
                     onClick = { onChange(!grant.read, grant.write) },
-                    label = { Text("Read") },
+                    label = { Text("Get posts") },
                 )
                 FilterChip(
                     selected = grant.write,
                     onClick = { onChange(grant.read, !grant.write) },
-                    label = { Text("Write") },
+                    label = { Text("Send my posts") },
                 )
                 TextButton(onClick = onRemove) { Text("Remove") }
             }
+            Text(
+                permissionSummary(grant.read, grant.write),
+                style = MaterialTheme.typography.labelSmall,
+            )
             RelayInfoPanel(info, onFetchInfo)
         }
     }
 }
+
+private fun permissionSummary(
+    read: Boolean,
+    write: Boolean,
+): String =
+    when {
+        read && write -> "Wayfarer downloads posts from here, and puts yours here too."
+        read -> "Wayfarer downloads posts from here. Nothing of yours is sent."
+        write -> "Your posts are sent here, but nothing is read back."
+        else -> "Nothing is allowed, so this relay is not used at all."
+    }
 
 @Composable
 private fun PendingRelayCard(
@@ -242,18 +327,26 @@ private fun PendingRelayCard(
             for (reason in pending.reasons) {
                 Text("· ${reason.describe()}", style = MaterialTheme.typography.bodySmall)
             }
+            Text(
+                "Allow Wayfarer to get posts from this server?",
+                style = MaterialTheme.typography.bodyMedium,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onApprove(true, false) }) { Text("Read") }
-                Button(onClick = { onApprove(true, true) }) { Text("Read + write") }
-                TextButton(onClick = onDeny) { Text("Refuse") }
+                Button(onClick = { onApprove(true, false) }) { Text("Get posts") }
+                OutlinedButton(onClick = { onApprove(true, true) }) { Text("And send mine") }
+                TextButton(onClick = onDeny) { Text("Block") }
             }
+            Text(
+                "\"Get posts\" is the safe answer if you are unsure — it only reads. You can allow posting later.",
+                style = MaterialTheme.typography.labelSmall,
+            )
             RelayInfoPanel(info, onFetchInfo)
         }
     }
 }
 
 /**
- * NIP-11 self-description, shown where the approve/refuse decision is made.
+ * NIP-11 self-description, shown where the allow/block decision is made.
  *
  * "Requires payment" and "requires auth" in particular are the difference
  * between a relay that will quietly ignore everything this app sends and one
@@ -265,8 +358,8 @@ private fun RelayInfoPanel(
     onFetch: () -> Unit,
 ) {
     when (info) {
-        null -> TextButton(onClick = onFetch) { Text("Fetch relay info") }
-        RelayInfoService.Entry.Loading -> Text("Reading relay info…", style = MaterialTheme.typography.bodySmall)
+        null -> TextButton(onClick = onFetch) { Text("Ask this relay to describe itself") }
+        RelayInfoService.Entry.Loading -> Text("Asking…", style = MaterialTheme.typography.bodySmall)
         is RelayInfoService.Entry.Failed ->
             Column {
                 Text(info.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -289,8 +382,8 @@ private fun RelayInfoPanel(
                 }
                 val flags =
                     listOfNotNull(
-                        "requires auth".takeIf { info.info.authRequired },
-                        "requires payment".takeIf { info.info.paymentRequired },
+                        "needs a login this app does not support".takeIf { info.info.authRequired },
+                        "charges for posting".takeIf { info.info.paymentRequired },
                     )
                 if (flags.isNotEmpty()) {
                     Text(flags.joinToString(" · "), style = MaterialTheme.typography.labelMedium)
@@ -303,12 +396,12 @@ private fun RelayInfoPanel(
 private fun DiscoveryReason.describe(): String {
     val prefix =
         when (source) {
-            DiscoverySource.BOOTSTRAP -> "suggested by the app"
-            DiscoverySource.USER_ENTERED -> "you added it"
-            DiscoverySource.OWN_RELAY_LIST -> "in your own relay list"
-            DiscoverySource.AUTHOR_RELAY_LIST -> "in someone's relay list"
-            DiscoverySource.EVENT_HINT -> "hinted by an event"
-            DiscoverySource.CONTACT_LIST -> "in your contact list"
+            DiscoverySource.BOOTSTRAP -> "suggested by Wayfarer"
+            DiscoverySource.USER_ENTERED -> "you asked for it"
+            DiscoverySource.OWN_RELAY_LIST -> "one of your own relays"
+            DiscoverySource.AUTHOR_RELAY_LIST -> "somebody you are reading posts here"
+            DiscoverySource.EVENT_HINT -> "a link pointed at it"
+            DiscoverySource.CONTACT_LIST -> "listed in your contacts"
         }
     return if (detail.isNullOrBlank()) prefix else "$prefix — $detail"
 }

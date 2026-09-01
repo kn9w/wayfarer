@@ -61,6 +61,34 @@ class ProfileRepository(
         return state.value[pubKey]
     }
 
+    /**
+     * Loads every profile in [pubKeys] that is not cached, in one round trip per
+     * relay rather than one per person.
+     *
+     * The feed needs a name for each author it shows, and asking for them one at
+     * a time is a fetch per author — fine for a handful of follows, absurd for a
+     * screenful of strangers on a relay somebody is browsing.
+     */
+    suspend fun loadAll(pubKeys: Set<PubKey>) {
+        val missing = pubKeys.filterNotTo(mutableSetOf()) { it in state.value }
+        if (missing.isEmpty()) return
+
+        relayLists.ensureFor(missing)
+
+        val outboxPlan = router.readPlanFor(missing, kinds = listOf(EventKind.METADATA), limitPerRelay = missing.size)
+        val plan =
+            if (outboxPlan.isEmpty) {
+                router.discoveryPlanFor(missing, listOf(EventKind.METADATA))
+            } else {
+                outboxPlan.plan
+            }
+        if (plan.isEmpty()) return
+
+        for (received in transport.fetch(plan)) {
+            absorb(received.event)
+        }
+    }
+
     /** Files a kind 0 into the cache, newest-wins. Ignores other kinds. */
     fun absorb(event: NostrEvent) {
         if (event.kind != EventKind.METADATA) return

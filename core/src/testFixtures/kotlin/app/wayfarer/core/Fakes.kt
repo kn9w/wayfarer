@@ -31,6 +31,9 @@ class FakeTransport(
     val fetched = mutableListOf<Map<RelayUrl, List<ReqFilter>>>()
     val published = mutableListOf<Pair<NostrEvent, Set<RelayUrl>>>()
 
+    /** How many times the client was brought up. Should be at most one per session. */
+    var startCount = 0
+
     override val connected: StateFlow<Set<RelayUrl>> = MutableStateFlow(emptySet())
 
     override fun subscribe(plan: Map<RelayUrl, List<ReqFilter>>): Flow<ReceivedEvent> = emptyFlow()
@@ -52,7 +55,9 @@ class FakeTransport(
         return relays.associateWith { PublishOutcome(accepted = true, message = "") }
     }
 
-    override fun start() = Unit
+    override fun start() {
+        startCount++
+    }
 
     override fun stop() = Unit
 }
@@ -210,6 +215,18 @@ object FakeBech32Codec : app.wayfarer.core.nostr.Bech32Codec {
     override fun encodeNote(eventIdHex: String) = "note$eventIdHex"
 
     override fun decodePubKey(input: String) = PubKey.parseOrNull(input.removePrefix("npub"))
+
+    /** `nprofile<hex>@relay,relay` stands in for the real TLV encoding. */
+    override fun decodeProfileRef(input: String): app.wayfarer.core.nostr.ProfileRef? {
+        val cleaned = input.trim().removePrefix("nostr:")
+        if (cleaned.startsWith("nprofile")) {
+            val body = cleaned.removePrefix("nprofile")
+            val pubKey = PubKey.parseOrNull(body.substringBefore('@')) ?: return null
+            val hints = body.substringAfter('@', "").split(',').filter { it.isNotBlank() }
+            return app.wayfarer.core.nostr.ProfileRef(pubKey, hints)
+        }
+        return decodePubKey(cleaned)?.let { app.wayfarer.core.nostr.ProfileRef(it) }
+    }
 
     override fun decodeSecKeyHex(input: String) =
         input.removePrefix("nsec").takeIf { it.length == 64 && it.all { c -> c in "0123456789abcdef" } }

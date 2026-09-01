@@ -7,20 +7,26 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import app.wayfarer.android.platform.DeviceAuthBridge
 import app.wayfarer.android.platform.Nip55Bridge
+import app.wayfarer.android.platform.QrScanBridge
 import app.wayfarer.android.signer.Nip55Protocol
 import app.wayfarer.android.ui.LoadingScreen
 import app.wayfarer.android.ui.WayfarerApp
 import app.wayfarer.android.ui.theme.WayfarerTheme
+import app.wayfarer.android.viewmodel.DeviceAuthOutcome
 import app.wayfarer.android.viewmodel.ExternalSignerIdentity
 import app.wayfarer.core.Wayfarer
 import app.wayfarer.core.model.PubKey
 
 class MainActivity : ComponentActivity() {
     private lateinit var nip55Bridge: Nip55Bridge
+    private lateinit var deviceAuthBridge: DeviceAuthBridge
+    private lateinit var qrScanBridge: QrScanBridge
 
-    /** Queried once: this is a PackageManager lookup, not something to do per frame. */
+    /** Queried once: these are PackageManager lookups, not something to do per frame. */
     private var signerInstalled = false
+    private var cameraPresent = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +45,23 @@ class MainActivity : ComponentActivity() {
         wayfarerApp.nip55Bridge = nip55Bridge
         signerInstalled = Nip55Bridge.isSignerInstalled(this)
 
+        // Same rule as above: every launcher has to be registered before STARTED.
+        deviceAuthBridge =
+            DeviceAuthBridge(
+                this,
+                registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                    deviceAuthBridge.onActivityResult(result)
+                },
+            )
+        qrScanBridge =
+            QrScanBridge(
+                this,
+                registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                    qrScanBridge.onActivityResult(result)
+                },
+            )
+        cameraPresent = QrScanBridge.hasCamera(this)
+
         setContent {
             WayfarerTheme {
                 val wayfarer by produceState<Wayfarer?>(initialValue = null) { value = wayfarerApp.wayfarer() }
@@ -50,6 +73,8 @@ class MainActivity : ComponentActivity() {
                             core = ready,
                             scope = wayfarerApp.scope,
                             externalSignerLogin = signerLoginFor(ready),
+                            deviceAuth = ::confirmDeviceOwner,
+                            qrScan = qrScanFor(),
                         )
                 }
             }
@@ -63,6 +88,19 @@ class MainActivity : ComponentActivity() {
      */
     private fun signerLoginFor(core: Wayfarer): (suspend () -> ExternalSignerIdentity?)? =
         if (!signerInstalled) null else ({ askSignerForIdentity(core) })
+
+    /** Null on a device with no camera, which is what hides the scan button. */
+    private fun qrScanFor(): (suspend () -> String?)? = if (!cameraPresent) null else ({ qrScanBridge.scan() })
+
+    /**
+     * The screen lock, before the secret key is shown. Reached only from the
+     * settings screen's explicit "show my key".
+     */
+    private suspend fun confirmDeviceOwner(): DeviceAuthOutcome =
+        deviceAuthBridge.confirm(
+            title = "Show your nostr key",
+            description = "Unlock to display the secret key for this account.",
+        )
 
     /**
      * NIP-55 `get_public_key`: the signer returns both the user's pubkey and its

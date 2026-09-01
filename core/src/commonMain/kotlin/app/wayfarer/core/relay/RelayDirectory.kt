@@ -164,6 +164,17 @@ class RelayDirectory(
     /** Seeds the pending queue with the app's suggested starting relays. */
     suspend fun suggest(urls: Collection<RelayUrl>) = note(urls, DiscoveryReason(DiscoverySource.BOOTSTRAP))
 
+    /**
+     * Records the relays a NIP-19 pointer named — an `nprofile`'s hints.
+     *
+     * Queued rather than used: a hint is a claim made by whoever wrote the link,
+     * and this app has exactly one way to start talking to a relay.
+     */
+    suspend fun noteHint(
+        urls: Collection<RelayUrl>,
+        namedBy: String,
+    ) = note(urls, DiscoveryReason(DiscoverySource.EVENT_HINT, "named by the link to $namedBy"))
+
     private suspend fun mutate(block: (RelayDirectorySnapshot) -> RelayDirectorySnapshot) {
         val updated =
             writeLock.withLock {

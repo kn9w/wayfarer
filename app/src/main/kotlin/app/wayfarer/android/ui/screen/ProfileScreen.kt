@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.nostr.RelayListEntry
 
 @Composable
 fun ProfileScreen(
@@ -65,11 +67,26 @@ fun ProfileScreen(
                     if (isMe) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { controller.go(Screen.EditProfile) }) { Text("Edit profile") }
-                            OutlinedButton(onClick = { controller.logout() }) { Text("Log out") }
+                            // Logging out erases the key, so it lives in settings
+                            // next to the backup that makes it survivable — not one
+                            // tap from the profile.
+                            OutlinedButton(onClick = { controller.go(Screen.Settings) }) { Text("Settings") }
                         }
                     }
                 }
             }
+        }
+
+        // Where this person says they can be found — the public NIP-65 list, which
+        // is a different thing from the relays this phone is allowed to use. On
+        // your own profile it is editable; on anyone else's it is what routing
+        // already knows, shown rather than hidden.
+        item {
+            AdvertisedRelaysCard(
+                entries = controller.advertisedRelaysFor(pubKey),
+                isMe = isMe,
+                onManage = controller::openRelayList,
+            )
         }
 
         if (viewed?.unreachable == true) {
@@ -106,6 +123,73 @@ fun ProfileScreen(
         }
     }
 }
+
+/**
+ * A profile's advertised relays (NIP-65, kind 10002).
+ *
+ * On your own profile this is the way in to editing and publishing it, and it
+ * says plainly that it is public and separate from the app's permission list —
+ * the two being confused for each other is the whole reason it lives here
+ * rather than beside the permission switches.
+ */
+@Composable
+private fun AdvertisedRelaysCard(
+    entries: List<RelayListEntry>,
+    isMe: Boolean,
+    onManage: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                if (isMe) "Where others find you" else "Where this person says to find them",
+                style = MaterialTheme.typography.titleSmall,
+            )
+
+            if (entries.isEmpty()) {
+                Text(
+                    if (isMe) {
+                        "You have not published a relay list, so nobody who does not already share a relay " +
+                            "with you can find your posts."
+                    } else {
+                        "No relay list found for this person yet, so their posts have to be guessed at rather " +
+                            "than fetched from where they actually publish."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                for (entry in entries.sortedBy { it.url.display() }) {
+                    Text(
+                        entry.url.display() + " · " + entry.direction(),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+
+            if (isMe) {
+                Text(
+                    "This is a public note signed by your key (NIP-65). It is not the same list as the relays " +
+                        "this phone is allowed to connect to.",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Button(onClick = onManage) {
+                    Text(if (entries.isEmpty()) "Set up my relay list" else "Manage my relay list")
+                }
+            }
+        }
+    }
+}
+
+private fun RelayListEntry.direction(): String =
+    when {
+        read && write -> "posts and replies"
+        write -> "posts"
+        read -> "replies and mentions"
+        else -> "nothing"
+    }
 
 @Composable
 fun EditProfileScreen(controller: AppController) {
