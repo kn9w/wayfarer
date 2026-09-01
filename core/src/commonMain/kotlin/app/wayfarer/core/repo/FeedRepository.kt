@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 
@@ -88,6 +89,34 @@ class FeedRepository(
         return LoadResult(loaded, readPlan.unreachable, readPlan.guessed, readPlan.plan.keys)
     }
 
+    /**
+     * Reads whatever [relays] are currently handing out, with no author filter.
+     *
+     * This is what a brand-new user actually needs: they follow nobody, so an
+     * outbox-routed feed is necessarily empty, and "here is what is on the relay
+     * you chose" is the only thing that can be shown. It is deliberately a
+     * separate method rather than a fallback inside [load] — the two are not the
+     * same claim, and the UI has to be able to say which one it is showing.
+     */
+    suspend fun loadFromRelays(
+        relays: Set<RelayUrl>,
+        limitPerRelay: Int = 50,
+    ): LoadResult {
+        if (relays.isEmpty()) return LoadResult(emptyList(), emptySet(), emptySet(), emptySet())
+
+        val plan = router.relayPlanFor(relays, FEED_KINDS, limitPerRelay)
+        if (plan.isEmpty()) return LoadResult(emptyList(), emptySet(), emptySet(), emptySet())
+
+        val seen = mutableSetOf<EventId>()
+        for (received in transport.fetch(plan)) {
+            absorb(received.event, received.relay)?.let { seen += it.id }
+            articles?.absorb(received.event, received.relay)
+        }
+
+        val loaded = notes.value.values.filter { it.id in seen }.sortedByDescending { it.createdAt }
+        return LoadResult(loaded, emptySet(), emptySet(), plan.keys)
+    }
+
     /** A live subscription over the same outbox-routed plan. */
     suspend fun live(
         authors: Set<PubKey>,
@@ -102,6 +131,31 @@ class FeedRepository(
             )
         return transport
             .subscribe(readPlan.plan)
+            .mapNotNull { received ->
+                articles?.absorb(received.event, received.relay)
+                absorb(received.event, received.relay)
+            }
+    }
+
+    /**
+     * A live subscription over the relays themselves, with no author filter.
+     *
+     * The browsing counterpart to [live], standing in the same relation to it as
+     * [loadFromRelays] does to [load]. It exists because a user who follows
+     * nobody has no authors to route by, and without it that user — which is
+     * every new user — would have no open subscription at all, so no relay
+     * socket would stay up and nothing would arrive between manual refreshes.
+     */
+    suspend fun liveFromRelays(
+        relays: Set<RelayUrl>,
+        since: Long,
+    ): Flow<Note> {
+        // No limit: a limit caps the stored events a relay replays before EOSE,
+        // and this subscription exists for what arrives after it.
+        val plan = router.relayPlanFor(relays, FEED_KINDS, since = since)
+        if (plan.isEmpty()) return emptyFlow()
+        return transport
+            .subscribe(plan)
             .mapNotNull { received ->
                 articles?.absorb(received.event, received.relay)
                 absorb(received.event, received.relay)

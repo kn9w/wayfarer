@@ -38,6 +38,9 @@ data class UnsignedEvent(
 object EventKind {
     const val METADATA = 0
     const val TEXT_NOTE = 1
+
+    /** NIP-22 comment. Threads under anything, including another comment. */
+    const val COMMENT = 1111
     const val CONTACT_LIST = 3
     const val RELAY_LIST = 10002
     const val LONG_FORM = 30023

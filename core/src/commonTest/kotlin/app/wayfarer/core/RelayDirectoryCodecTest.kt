@@ -84,4 +84,44 @@ class RelayDirectoryCodecTest {
         assertFalse(relay("a.example") in decoded.pending)
         assertFalse(relay("a.example") in decoded.denied)
     }
+
+    // ---- favourites -------------------------------------------------------
+
+    @Test
+    fun `a starred relay survives the round trip`() {
+        val codec = RelayDirectoryCodec(testNormalizer)
+        val snapshot =
+            RelayDirectorySnapshot(
+                grants = mapOf(relay("a.example") to RelayGrant.readOnly(relay("a.example"))),
+                favourites = setOf(relay("a.example"), relay("b.example")),
+            )
+
+        val decoded = codec.decode(codec.encode(snapshot))
+
+        assertEquals(setOf(relay("a.example"), relay("b.example")), decoded.favourites)
+    }
+
+    @Test
+    fun `a star outlives the grant it was put on`() {
+        val codec = RelayDirectoryCodec(testNormalizer)
+        // Revoking a relay deletes its grant. A star kept on the grant would go
+        // with it and come back wrong; kept apart, it is still there.
+        val snapshot = RelayDirectorySnapshot(grants = emptyMap(), favourites = setOf(relay("a.example")))
+
+        assertEquals(setOf(relay("a.example")), codec.decode(codec.encode(snapshot)).favourites)
+    }
+
+    @Test
+    fun `a file written before favourites existed still loads every grant`() {
+        val codec = RelayDirectoryCodec(testNormalizer)
+        // The upgrade case. Had the flag been a fifth column on G, this file
+        // would have parsed to nothing and silently emptied the user's list.
+        val old = "G\twss://a.example/\ttrue\tfalse\nD\twss://blocked.example/\n"
+
+        val decoded = codec.decode(old)
+
+        assertEquals(setOf(relay("a.example")), decoded.grants.keys)
+        assertEquals(setOf(relay("blocked.example")), decoded.denied)
+        assertTrue(decoded.favourites.isEmpty())
+    }
 }

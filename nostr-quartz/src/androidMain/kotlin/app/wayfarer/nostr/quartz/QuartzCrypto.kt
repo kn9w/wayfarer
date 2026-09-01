@@ -3,14 +3,17 @@ package app.wayfarer.nostr.quartz
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.nostr.Bech32Codec
 import app.wayfarer.core.nostr.KeyTool
+import app.wayfarer.core.nostr.ProfileRef
 import app.wayfarer.core.nostr.RelayUrlNormalizer
 import app.wayfarer.core.util.Clock
 import com.vitorpamplona.quartz.nip01Core.core.hexToByteArray
 import com.vitorpamplona.quartz.nip01Core.core.toHexKey
 import com.vitorpamplona.quartz.nip01Core.crypto.Nip01Crypto
 import com.vitorpamplona.quartz.nip01Core.relay.normalizer.RelayUrlNormalizer as QuartzRelayUrlNormalizer
+import com.vitorpamplona.quartz.nip19Bech32.Nip19Parser
 import com.vitorpamplona.quartz.nip19Bech32.decodePrivateKeyAsHexOrNull
 import com.vitorpamplona.quartz.nip19Bech32.decodePublicKeyAsHexOrNull
+import com.vitorpamplona.quartz.nip19Bech32.entities.NProfile
 import com.vitorpamplona.quartz.nip19Bech32.toNote
 import com.vitorpamplona.quartz.nip19Bech32.toNpub
 import com.vitorpamplona.quartz.nip19Bech32.toNsec
@@ -49,6 +52,24 @@ class QuartzBech32Codec : Bech32Codec {
         // happily accepts any even-length hex string. Re-check the length here so
         // a 33-byte compressed key or a truncated paste cannot become a PubKey.
         return PubKey.parseOrNull(decodePublicKeyAsHexOrNull(cleaned))
+    }
+
+    /**
+     * Keeps the relay hints, which [decodePubKey] throws away.
+     *
+     * Quartz's parser is asked first because only it can see inside an
+     * `nprofile`'s TLV; anything it does not recognise as a profile falls back to
+     * the plain decode, so `npub` and bare hex still work and simply carry no
+     * hints.
+     */
+    override fun decodeProfileRef(input: String): ProfileRef? {
+        val cleaned = input.trim().removePrefix("nostr:")
+        val entity = Nip19Parser.uriToRoute(cleaned)?.entity
+        if (entity is NProfile) {
+            val pubKey = PubKey.parseOrNull(entity.hex) ?: return null
+            return ProfileRef(pubKey, entity.relay.map { it.url })
+        }
+        return decodePubKey(cleaned)?.let { ProfileRef(it) }
     }
 
     override fun decodeSecKeyHex(input: String): String? {

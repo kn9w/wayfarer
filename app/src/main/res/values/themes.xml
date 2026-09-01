@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose draws everything; this only needs to not flash a system theme. -->
-    <style name="Theme.Wayfarer" parent="android:Theme.Material.NoActionBar" />
+    <!--
+      Compose draws everything; this only decides what is on screen for the frame
+      before it does.
+
+      The parent is the *light* framework theme, and the background is set
+      explicitly, because `android:Theme.Material` is the dark one — inheriting it
+      put a dark grey window behind a light-themed app. minSdk is 26, so there is
+      no framework DayNight theme to lean on; the values-night copy of this file
+      is how the dark window background is selected.
+    -->
+    <style name="Theme.Wayfarer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
 </resources>

@@ -31,6 +31,15 @@ class RelayListRepository(
     private val router: OutboxRouter,
     private val directory: RelayDirectory,
     private val clock: Clock,
+    /**
+     * Names a pubkey for the reason strings shown on the relay screen.
+     *
+     * Injected rather than calling [PubKey.abbreviated], which is hex: these
+     * strings are read by a person deciding whether to allow a relay, and a
+     * truncated hex key tells them nothing they can recognise. Defaults to hex
+     * only so tests and non-UI callers need not supply a bech32 codec.
+     */
+    private val describe: (PubKey) -> String = { it.abbreviated() },
 ) {
     /**
      * Fetches the kind 10002 of every author in [authors] that is not cached yet,
@@ -80,7 +89,7 @@ class RelayListRepository(
         isOwnAccount: Boolean,
     ) {
         val source = if (isOwnAccount) DiscoverySource.OWN_RELAY_LIST else DiscoverySource.AUTHOR_RELAY_LIST
-        val detail = if (isOwnAccount) "your relay list" else "relay list of ${list.author.abbreviated()}"
+        val detail = if (isOwnAccount) "your relay list" else "relay list of ${describe(list.author)}"
         directory.note(list.entries.map { it.url }, DiscoveryReason(source, detail))
     }
 

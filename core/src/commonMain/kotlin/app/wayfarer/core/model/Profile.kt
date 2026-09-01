@@ -21,7 +21,17 @@ data class Profile(
     /** createdAt of the kind 0 this came from; used to keep the newest. */
     val updatedAt: Long = 0,
 ) {
-    fun bestName(): String = displayName?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() } ?: pubKey.abbreviated()
+    /**
+     * What this person calls themselves, or null when nothing is known.
+     *
+     * Null rather than a hex fallback. The fallback used to be
+     * [PubKey.abbreviated], which is hex — so an author with no metadata was
+     * shown as `a1b2c3d4…9f0e` on one screen and as an npub on the next. Making
+     * the absence explicit forces each caller to choose, and the only correct
+     * choice for a person is an npub.
+     */
+    fun displayNameOrNull(): String? =
+        displayName?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() }
 
     companion object {
         fun empty(pubKey: PubKey) = Profile(pubKey)

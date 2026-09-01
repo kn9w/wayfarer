@@ -2,149 +2,749 @@ package app.wayfarer.android.ui.screen
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController
+import app.wayfarer.android.viewmodel.BrowseMode
+import app.wayfarer.android.viewmodel.BrowseOrder
+import app.wayfarer.android.viewmodel.FeedItem
+import app.wayfarer.android.viewmodel.GlobalState
 import app.wayfarer.android.viewmodel.Screen
+import app.wayfarer.android.viewmodel.ThreadState
+import app.wayfarer.android.viewmodel.rootRefOfNote
+import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.model.ThreadRef
+import app.wayfarer.core.repo.ThreadEntry
 import app.wayfarer.core.model.Note
-import app.wayfarer.core.model.Profile
 
+/** Horizontal inset shared by every post, so names and bodies line up down the feed. */
+internal val PostHorizontalPadding = 16.dp
+
+/**
+ * The Global screen: two ways of reading, and nothing else.
+ *
+ * **Follows** steps through people. One person at a time, everything they have
+ * written in one list, and the arrows move to the next person rather than the
+ * next post — ordered by who wrote most recently, which is as close as this
+ * shape gets to "what is new".
+ *
+ * **Relay** steps through posts. One relay, one post on the screen, arrows to
+ * the next. A relay is a place you browse rather than a feed you catch up on,
+ * and this is what that looks like.
+ *
+ * They are deliberately not the same list with a filter on it. Catching up with
+ * somebody and looking at what a stranger's server is carrying are different
+ * things to be doing, and flattening them would misrepresent both.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(controller: AppController) {
-    val feed by controller.feed.collectAsStateWithLifecycle()
-    val articles by controller.articles.collectAsStateWithLifecycle()
-    var lookup by remember { mutableStateOf("") }
+    val global by controller.global.state.collectAsStateWithLifecycle()
+    val refreshing by controller.refreshing.collectAsStateWithLifecycle()
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = lookup,
-                    onValueChange = { lookup = it },
-                    label = { Text("Look up an npub") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
+    var filtering by remember { mutableStateOf(false) }
+
+    if (filtering) {
+        FilterSheet(
+            state = global,
+            onDismiss = { filtering = false },
+            onOrder = controller.global::setOrder,
+            onActivity = controller.global::setActivity,
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        ModeHeader(
+            mode = global.mode,
+            onMode = controller.global::setMode,
+            onFilter = { filtering = true },
+        )
+        SubjectRow(global, controller)
+        HorizontalDivider()
+
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { controller.refreshFeed() },
+            state = rememberPullToRefreshState(),
+            modifier = Modifier.weight(1f),
+        ) {
+            when (global.mode) {
+                BrowseMode.Follows -> FollowsPane(global, controller)
+                BrowseMode.Relay -> RelayPane(global, controller)
+            }
+        }
+
+    }
+}
+
+// ---- header -------------------------------------------------------------
+
+@Composable
+private fun ModeHeader(
+    mode: BrowseMode,
+    onMode: (BrowseMode) -> Unit,
+    onFilter: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+
+    ScreenHeader(
+        title = {
+            Box {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { open = true },
+                ) {
+                    Text(
+                        if (mode == BrowseMode.Follows) "Follows" else "Relay",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Icon(WayfarerIcons.DropDown, contentDescription = "Change what you are reading")
+                }
+                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Follows") },
+                        onClick = {
+                            open = false
+                            onMode(BrowseMode.Follows)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Relay") },
+                        onClick = {
+                            open = false
+                            onMode(BrowseMode.Relay)
+                        },
+                    )
+                }
+            }
+        },
+        actions = {
+            IconButton(onClick = onFilter) {
+                Icon(WayfarerIcons.Funnel, contentDescription = "Filter and order")
+            }
+        },
+    )
+}
+
+/**
+ * What is on screen: a person, or a relay.
+ *
+ * The relay is a picker because a relay is a thing you go to. The person is not
+ * — you reach people by stepping through the rotation, which is what makes it a
+ * rotation rather than a list you choose from.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SubjectRow(
+    global: GlobalState,
+    controller: AppController,
+) {
+    var picking by remember { mutableStateOf(false) }
+
+    when (global.mode) {
+        BrowseMode.Follows -> {
+            val person = global.person
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = person?.let { controller.displayName(it) } ?: "Nobody to read",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontFamily = if (person != null && controller.profileFor(person) == null) FontFamily.Monospace else null,
+
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                OutlinedButton(
-                    onClick = { controller.openProfileByKey(lookup) },
-                    enabled = lookup.isNotBlank(),
-                ) { Text("Open") }
-            }
-        }
-
-        item {
-            OutlinedButton(onClick = { controller.refreshFeed() }, modifier = Modifier.fillMaxWidth()) {
-                Text("Refresh")
-            }
-        }
-
-        // The outbox model's failure mode made visible: an author whose relays we
-        // are not allowed to reach is named, not silently missing from the feed.
-        if (feed.unreachableAuthors.isNotEmpty()) {
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "${feed.unreachableAuthors.size} of the people you follow publish only to relays you have not " +
-                                "approved, so their notes are missing. Their relays are waiting in the Relays tab.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                if (person != null) {
+                    Text(
+                        global.position,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
 
-        if (feed.loaded && feed.notes.isEmpty()) {
-            item {
+        BrowseMode.Relay -> {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = global.relays.isNotEmpty()) { picking = true }
+                        .padding(horizontal = PostHorizontalPadding, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    "Nothing here yet. Approve some relays, then follow someone — or post the first note yourself.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    global.relay?.display() ?: "No relay allowed yet",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        global.position,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (global.relays.isNotEmpty()) {
+                        Icon(WayfarerIcons.DropDown, contentDescription = "Choose a relay")
+                    }
+                }
             }
-        }
 
-        if (articles.isNotEmpty()) {
-            item { Text("Articles", style = MaterialTheme.typography.titleSmall) }
-            items(articles, key = { it.address }) { article ->
-                ArticleCard(
-                    article = article,
-                    authorName = feed.profiles[article.author]?.bestName() ?: article.author.abbreviated(),
-                    onOpen = { controller.go(Screen.ReadArticle(article.address)) },
-                )
-            }
-            item { Text("Notes", style = MaterialTheme.typography.titleSmall) }
-        }
-
-        items(feed.notes, key = { it.id.hex }) { note ->
-            NoteCard(
-                note = note,
-                profile = feed.profiles[note.author],
-                onOpenAuthor = { controller.openProfile(note.author) },
-            )
-        }
-
-        if (feed.loaded) {
-            item {
-                Text(
-                    "Queried ${feed.relaysQueried} relays, chosen from where these authors say they publish." +
-                        if (feed.guessedAuthors.isEmpty()) {
-                            ""
-                        } else {
-                            " ${feed.guessedAuthors.size} of them publish no relay list, so those were guessed " +
-                                "from your own approved relays rather than routed."
-                        },
-                    style = MaterialTheme.typography.labelSmall,
-                )
+            if (picking) {
+                ModalBottomSheet(onDismissRequest = { picking = false }, sheetState = rememberModalBottomSheetState()) {
+                    Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
+                        Text(
+                            "Read from",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                        )
+                        for (url in global.relays) {
+                            Text(
+                                url.display(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontFamily = FontFamily.Monospace,
+                                color =
+                                    if (url == global.relay) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            picking = false
+                                            controller.global.selectRelay(url)
+                                        }.padding(horizontal = 20.dp, vertical = 14.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+// ---- the two panes ------------------------------------------------------
+
 @Composable
-fun NoteCard(
-    note: Note,
-    profile: Profile?,
-    onOpenAuthor: () -> Unit,
+private fun FollowsPane(
+    global: GlobalState,
+    controller: AppController,
 ) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    if (global.person == null) {
+        EmptyPane {
+            if (global.hiddenByActivity > 0) {
+                Text("Nobody matches this filter", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "${global.hiddenByActivity} of the people you follow are hidden by the activity filter. " +
+                        "Widen it from the funnel above.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text("You do not follow anyone yet", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Follows shows one person at a time, and there is nobody to show. Browse a relay instead, " +
+                        "and open somebody's profile from a post you like.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(onClick = { controller.global.setMode(BrowseMode.Relay) }) { Text("Browse a relay") }
+            }
+        }
+        return
+    }
+
+    if (global.personPosts.isEmpty()) {
+        EmptyPane {
+            Text("Nothing from this person yet", style = MaterialTheme.typography.titleSmall)
             Text(
-                profile?.bestName() ?: note.author.abbreviated(),
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.clickable(onClick = onOpenAuthor),
-            )
-            Text(note.content, style = MaterialTheme.typography.bodyMedium)
-            // Provenance: which relay actually delivered this note. Under the
-            // outbox model that is a meaningful thing to be able to see.
-            Text(
-                "seen on " + note.seenOn.joinToString(", ") { it.display() }.ifBlank { "this device" },
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
+                "Wayfarer has not found anything they wrote on the relays it is allowed to read. They may " +
+                    "publish somewhere you have not approved.",
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
+        return
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 12.dp)) {
+        items(global.personPosts, key = { it.key }) { item ->
+            PostBody(item, controller)
+            PostDivider()
+        }
+    }
+}
+
+/**
+ * One post, filling the screen.
+ *
+ * Scrollable rather than clipped: a long note is still one post, and the arrows
+ * are what move to the next one.
+ */
+@Composable
+private fun RelayPane(
+    global: GlobalState,
+    controller: AppController,
+) {
+    if (global.relay == null) {
+        EmptyPane {
+            Text("No relay to read", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Wayfarer connects to nothing until you allow a relay. Allowing one is the whole of the setup.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = { controller.go(Screen.Relays) }) { Text("Choose relays") }
+        }
+        return
+    }
+
+    val post = global.currentPost
+    if (post == null) {
+        EmptyPane {
+            Text("Nothing from this relay yet", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "${global.relay?.display()} has not handed anything over. It may be quiet, or still connecting.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        return
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        PostBody(post, controller)
+    }
+}
+
+@Composable
+private fun PostBody(
+    item: FeedItem,
+    controller: AppController,
+) {
+    when (item) {
+        is FeedItem.Post ->
+            NoteRow(note = item.note, controller = controller)
+        is FeedItem.LongForm ->
+            ArticleRow(
+                article = item.article,
+                controller = controller,
+                onOpen = { controller.go(Screen.ReadArticle(item.article.address)) },
+            )
+    }
+}
+
+@Composable
+private fun EmptyPane(content: @Composable ColumnScope.() -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Card(
+            modifier = Modifier.padding(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
+        }
+    }
+}
+
+// ---- paging -------------------------------------------------------------
+
+/**
+ * The arrows, above the navigation bar.
+ *
+ * They step through people in Follows and posts in Relay — the thing the mode is
+ * organised around, which is why there is one control rather than two.
+ */
+@Composable
+fun PagingBar(controller: AppController) {
+    val global by controller.global.state.collectAsStateWithLifecycle()
+
+    HorizontalDivider()
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { controller.global.previous() }, enabled = global.hasPrevious) {
+            Icon(
+                WayfarerIcons.ChevronLeft,
+                contentDescription = if (global.mode == BrowseMode.Follows) "Previous person" else "Previous post",
+            )
+        }
+        Text(
+            when (global.mode) {
+                BrowseMode.Follows -> "the people you follow"
+                BrowseMode.Relay -> "posts on this relay"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        IconButton(onClick = { controller.global.next() }, enabled = global.hasNext) {
+            Icon(
+                WayfarerIcons.ChevronRight,
+                contentDescription = if (global.mode == BrowseMode.Follows) "Next person" else "Next post",
+            )
+        }
+    }
+}
+
+// ---- filters ------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSheet(
+    state: GlobalState,
+    onDismiss: () -> Unit,
+    onOrder: (BrowseOrder) -> Unit,
+    onActivity: (ActivityFilter) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Order", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = state.order == BrowseOrder.Chronological,
+                    onClick = { onOrder(BrowseOrder.Chronological) },
+                    label = { Text("Chronological") },
+                )
+                FilterChip(
+                    selected = state.order == BrowseOrder.Random,
+                    onClick = { onOrder(BrowseOrder.Random) },
+                    label = { Text("Random") },
+                )
+            }
+            Text(
+                when (state.mode) {
+                    BrowseMode.Follows ->
+                        "Chronological puts whoever wrote most recently first. Random shuffles the order you " +
+                            "meet them in, and holds that order until you pull to refresh."
+                    BrowseMode.Relay ->
+                        "Chronological is newest first. Random shuffles this relay's posts, and holds that " +
+                            "order until you pull to refresh."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (state.mode == BrowseMode.Follows) {
+                HorizontalDivider()
+                Text("Activity", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.activity == ActivityFilter.Any,
+                        onClick = { onActivity(ActivityFilter.Any) },
+                        label = { Text("Everyone") },
+                    )
+                    FilterChip(
+                        selected = state.activity == ActivityFilter.ActiveRecently,
+                        onClick = { onActivity(ActivityFilter.ActiveRecently) },
+                        label = { Text("Active") },
+                    )
+                    FilterChip(
+                        selected = state.activity == ActivityFilter.QuietRecently,
+                        onClick = { onActivity(ActivityFilter.QuietRecently) },
+                        label = { Text("Quiet") },
+                    )
+                }
+                Text(
+                    "Active means they have posted in the last 7 days; quiet means they have not. Judged only " +
+                        "from what Wayfarer has actually fetched — somebody posting to relays you have not " +
+                        "allowed will look quiet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (state.hiddenByActivity > 0) {
+                    Text(
+                        "${state.hiddenByActivity} of your follows are hidden by this filter.",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---- posts --------------------------------------------------------------
+
+/**
+ * The conversation under a post, opened on demand.
+ *
+ * Closed, it is one quiet line. A count cannot be shown before the thread is
+ * fetched — and fetching every thread in a feed would be a relay query per post,
+ * the same mistake that stalled the streamed feed before profile lookups were
+ * batched — so the affordance says "Replies" until it knows better and a number
+ * afterwards.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ThreadSection(
+    root: ThreadRef,
+    rootKind: String,
+    rootAuthor: PubKey,
+    controller: AppController,
+) {
+    val threads by controller.threads.threads.collectAsStateWithLifecycle()
+    val expandedRoots by controller.threads.expanded.collectAsStateWithLifecycle()
+    val state = threads[root] ?: ThreadState()
+    val expanded = root in expandedRoots
+    var draft by remember(root) { mutableStateOf("") }
+
+    // Nothing to offer once we have looked and found an empty conversation.
+    if (state.loaded && state.entries.isEmpty() && !expanded) return
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.clickable { controller.threads.toggle(root) },
+    ) {
+        Icon(
+            WayfarerIcons.Reply,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            when {
+                state.loading -> "Loading replies…"
+                !state.loaded -> "Replies"
+                state.entries.size == 1 -> "1 reply"
+                else -> "${state.entries.size} replies"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+
+    if (!expanded) return
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (state.loaded && state.entries.isEmpty()) {
+            Text(
+                "Nothing here yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        for (entry in state.entries) {
+            ThreadEntryRow(entry, controller)
+        }
+    }
+
+    ReplyComposer(
+        draft = draft,
+        onDraft = { draft = it },
+        posting = state.posting,
+        onSend = {
+            // Root and parent are the same here: this replies to the post, not
+            // to another reply. Deeper in a thread they diverge, which is the
+            // pair NIP-22 keeps so a conversation can be refetched by its root.
+            controller.threads.reply(
+                root = root,
+                rootKind = rootKind,
+                rootAuthor = rootAuthor,
+                parent = root,
+                parentKind = rootKind,
+                parentAuthor = rootAuthor,
+                content = draft,
+            )
+            draft = ""
+        },
+    )
+}
+
+@Composable
+private fun ThreadEntryRow(
+    entry: ThreadEntry,
+    controller: AppController,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp)
+                .padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        PostByline(
+            name = controller.displayName(entry.author),
+            createdAt = entry.createdAt,
+            controller = controller,
+            onOpenAuthor = { controller.openProfile(entry.author) },
+        )
+        Text(entry.content, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** The box a reply is written in. Shared by note threads and article comments. */
+@Composable
+internal fun ReplyComposer(
+    draft: String,
+    onDraft: (String) -> Unit,
+    posting: Boolean,
+    onSend: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = onDraft,
+            label = { Text("Reply") },
+            modifier = Modifier.weight(1f),
+        )
+        Button(onClick = onSend, enabled = !posting && draft.isNotBlank()) { Text("Send") }
+    }
+}
+
+/** The one pixel that separates two posts. */
+@Composable
+internal fun PostDivider() {
+    HorizontalDivider(thickness = Dp.Hairline, color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+fun NoteRow(
+    note: Note,
+    controller: AppController,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        PostByline(
+            name = controller.displayName(note.author),
+            createdAt = note.createdAt,
+            controller = controller,
+            onOpenAuthor = { controller.openProfile(note.author) },
+        )
+
+        // A reply used to render as though it were a post of its own, because
+        // Note.replyTo was parsed and then never read by anything. Saying so is
+        // the difference between a fragment and a fragment you can place.
+        note.replyTo?.let { parent ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    WayfarerIcons.Reply,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    controller.replyContextFor(parent),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Text(note.content, style = MaterialTheme.typography.bodyMedium)
+
+        // Provenance: which relay actually delivered this note. Under the
+        // outbox model that is a meaningful thing to be able to see.
+        Text(
+            "seen on " + note.seenOn.joinToString(", ") { it.display() }.ifBlank { "this device" },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace,
+        )
+
+        ThreadSection(root = rootRefOfNote(note.id), rootKind = "1", rootAuthor = note.author, controller = controller)
+    }
+}
+
+/** Who wrote it and when — the two facts every post carries. */
+@Composable
+internal fun PostByline(
+    name: String,
+    createdAt: Long,
+    controller: AppController,
+    onOpenAuthor: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            name,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier =
+                if (onOpenAuthor == null) {
+                    Modifier.weight(1f, fill = false)
+                } else {
+                    Modifier.weight(1f, fill = false).clickable(onClick = onOpenAuthor)
+                },
+        )
+        Text(
+            controller.timeAgo(createdAt),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

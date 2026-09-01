@@ -7,6 +7,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * Inverts [lists] into "who publishes here", per relay.
+ *
+ * The relay permission screen ranks by this: a relay fifty of your follows
+ * publish to is a more consequential decision than one a single author named
+ * once, and with hundreds of relays queued that ordering is the difference
+ * between a usable list and an unusable one.
+ *
+ * Only write ("outbox") entries count. A relay an author merely *reads* from is
+ * not somewhere their posts can be fetched, so counting it would inflate the
+ * number with relays that would return nothing.
+ *
+ * Pure, so it is testable without a network and cheap enough to recompute
+ * whenever either input changes.
+ */
+fun publishersByRelay(lists: Map<PubKey, RelayList>): Map<RelayUrl, Set<PubKey>> =
+    buildMap<RelayUrl, MutableSet<PubKey>> {
+        for ((author, list) in lists) {
+            // distinct(): an author listing the same relay twice is still one
+            // author, and a Set of authors would hide that anyway.
+            for (relay in list.outbox.distinct()) {
+                getOrPut(relay) { mutableSetOf() } += author
+            }
+        }
+    }
+
 /** One author's NIP-65 advertisement, as last seen. */
 data class RelayList(
     val author: PubKey,

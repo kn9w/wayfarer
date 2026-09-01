@@ -85,6 +85,21 @@ data class RelayListEntry(
     val write: Boolean,
 )
 
+/**
+ * A pointer to a person, as a NIP-19 entity carries it.
+ *
+ * The hints are the reason this exists next to a plain [PubKey]: an `nprofile`
+ * says *where* to look for someone, and that is the difference between reaching
+ * them directly and having to ask relays the user never chose. Kept as raw
+ * strings because normalizing them is a [RelayUrlNormalizer]'s job, and an
+ * unusable hint should be dropped there rather than silently here.
+ */
+data class ProfileRef(
+    val pubKey: PubKey,
+    /** Relay hints carried by an `nprofile`. Empty for a bare `npub` or hex. */
+    val relayHints: List<String> = emptyList(),
+)
+
 /** NIP-19 bech32 entities, in and out. */
 interface Bech32Codec {
     fun encodeNpub(pubKey: PubKey): String
@@ -95,6 +110,15 @@ interface Bech32Codec {
 
     /** Accepts npub / nprofile / raw hex. Null if none of those. */
     fun decodePubKey(input: String): PubKey?
+
+    /**
+     * Like [decodePubKey], but keeps the relay hints an `nprofile` carries.
+     *
+     * Onboarding asks for these by name: a pointer with hints can be resolved by
+     * asking the relays it names, while one without leaves the app no option but
+     * to query relays of its own — which is a thing the user has to be told.
+     */
+    fun decodeProfileRef(input: String): ProfileRef?
 
     /** Accepts nsec / raw hex. Null if neither. Returned as lowercase hex. */
     fun decodeSecKeyHex(input: String): String?

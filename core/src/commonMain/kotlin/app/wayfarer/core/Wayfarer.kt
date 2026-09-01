@@ -16,8 +16,10 @@ import app.wayfarer.core.repo.AccountManager
 import app.wayfarer.core.repo.ArticleRepository
 import app.wayfarer.core.repo.ContactRepository
 import app.wayfarer.core.repo.FeedRepository
+import app.wayfarer.core.repo.OnboardingStore
 import app.wayfarer.core.repo.ProfileRepository
 import app.wayfarer.core.repo.RelayListRepository
+import app.wayfarer.core.repo.ThreadRepository
 import app.wayfarer.core.repo.SignerFactory
 import app.wayfarer.core.store.KeyValueStore
 import app.wayfarer.core.store.PersistedRelayDirectoryStore
@@ -65,11 +67,28 @@ class Wayfarer private constructor(
     val profiles: ProfileRepository,
     val feed: FeedRepository,
     val articles: ArticleRepository,
+    /** Conversations under a note or an article. Fetched on demand, not streamed. */
+    val threads: ThreadRepository,
     val relayInfo: RelayInfoService,
     val contacts: ContactRepository,
     val relayListRepo: RelayListRepository,
     val normalizer: RelayUrlNormalizer,
     val bech32: Bech32Codec,
+    val onboarding: OnboardingStore,
+    /**
+     * The wall clock the repositories were built with.
+     *
+     * Exposed because the UI layer needs the same one — a live subscription is
+     * opened with a `since` of "now", and taking that from a different clock than
+     * the one stamping events would make the boundary drift under test.
+     */
+    val clock: Clock,
+    /**
+     * The relays this build ships with, normalized. Named here so onboarding can
+     * say which relays it would have to query before it queries them — the list
+     * outlives its pending entries, which disappear as soon as the user decides.
+     */
+    val suggestedRelays: List<RelayUrl>,
 ) {
     companion object {
         /**
@@ -104,11 +123,17 @@ class Wayfarer private constructor(
                     initial = directoryStore.load(),
                     persistence = directoryStore,
                 )
-            directory.suggest(bootstrapSuggestions.mapNotNull(backend.normalizer::normalize))
+            val suggested = bootstrapSuggestions.mapNotNull(backend.normalizer::normalize)
+            directory.suggest(suggested)
 
             val transport = backend.transportFactory(directory)
             val relayListCache = RelayListCache()
-            val router = OutboxRouter(relayListCache, directory, outboxConfig)
+            // The relay screen's "why Wayfarer wants this" lines name people, and
+            // a person is an npub — never the hex the model abbreviates to.
+            val describe: (app.wayfarer.core.model.PubKey) -> String = { key ->
+                backend.bech32.encodeNpub(key).let { npub -> npub.take(12) + "…" + npub.takeLast(6) }
+            }
+            val router = OutboxRouter(relayListCache, directory, outboxConfig, describe)
 
             val relayListRepo =
                 RelayListRepository(
@@ -118,6 +143,7 @@ class Wayfarer private constructor(
                     router = router,
                     directory = directory,
                     clock = backend.clock,
+                    describe = describe,
                 )
 
             val articleRepo = ArticleRepository(transport, backend.codec, router, relayListRepo, backend.clock)
@@ -138,11 +164,15 @@ class Wayfarer private constructor(
                 profiles = ProfileRepository(transport, backend.codec, router, relayListRepo, backend.clock),
                 feed = FeedRepository(transport, backend.codec, router, relayListRepo, backend.clock, articleRepo),
                 articles = articleRepo,
+                threads = ThreadRepository(transport, backend.codec, router, backend.clock),
                 relayInfo = RelayInfoService(backend.relayInfoFetcher),
                 contacts = ContactRepository(transport, backend.codec, router, relayListRepo),
                 relayListRepo = relayListRepo,
                 normalizer = backend.normalizer,
                 bech32 = backend.bech32,
+                onboarding = OnboardingStore(settings),
+                clock = backend.clock,
+                suggestedRelays = suggested,
             )
         }
     }

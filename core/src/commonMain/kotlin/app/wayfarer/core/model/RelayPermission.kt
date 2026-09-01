@@ -73,4 +73,13 @@ data class RelayDirectorySnapshot(
     val pending: Map<RelayUrl, PendingRelay> = emptyMap(),
     /** Relays the user explicitly rejected. Kept so they stop reappearing as pending. */
     val denied: Set<RelayUrl> = emptySet(),
+    /**
+     * Relays the user starred, to be offered first when picking one to read.
+     *
+     * Deliberately its own set rather than a flag on [RelayGrant]: a grant is
+     * *deleted* when a relay is revoked, so a star kept there would vanish with
+     * it and reappear wrong on re-approval. A star is a lasting preference about
+     * a relay, not part of what that relay is currently allowed to do.
+     */
+    val favourites: Set<RelayUrl> = emptySet(),
 )

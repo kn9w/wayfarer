@@ -151,6 +151,20 @@ class RelayDirectory(
             )
         }
 
+    /**
+     * Stars or unstars a relay.
+     *
+     * Not a permission: starring changes nothing about what may be fetched, so
+     * unlike the mutators around it this one has no bearing on routing and must
+     * not be treated as a reason to reload anything.
+     */
+    suspend fun setFavourite(
+        url: RelayUrl,
+        favourite: Boolean,
+    ) = mutate { current ->
+        current.copy(favourites = if (favourite) current.favourites + url else current.favourites - url)
+    }
+
     /** Forgets a relay entirely — no grant, no pending entry, no denial. */
     suspend fun forget(url: RelayUrl) =
         mutate { current ->
@@ -163,6 +177,17 @@ class RelayDirectory(
 
     /** Seeds the pending queue with the app's suggested starting relays. */
     suspend fun suggest(urls: Collection<RelayUrl>) = note(urls, DiscoveryReason(DiscoverySource.BOOTSTRAP))
+
+    /**
+     * Records the relays a NIP-19 pointer named — an `nprofile`'s hints.
+     *
+     * Queued rather than used: a hint is a claim made by whoever wrote the link,
+     * and this app has exactly one way to start talking to a relay.
+     */
+    suspend fun noteHint(
+        urls: Collection<RelayUrl>,
+        namedBy: String,
+    ) = note(urls, DiscoveryReason(DiscoverySource.EVENT_HINT, "named by the link to $namedBy"))
 
     private suspend fun mutate(block: (RelayDirectorySnapshot) -> RelayDirectorySnapshot) {
         val updated =

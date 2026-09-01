@@ -3,6 +3,7 @@ package app.wayfarer.android.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
@@ -11,11 +12,36 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import app.wayfarer.android.viewmodel.UserMessage
 import app.wayfarer.core.repo.PublishReport
+
+/**
+ * A screen's own title bar, inside its content.
+ *
+ * The app bar above is deliberately thin — a status line and a back arrow — so
+ * each screen carries its own title and the actions that belong to it, rather
+ * than one shared bar growing a slot for every screen's needs. That is why the
+ * Global screen can put a mode dropdown where its title goes, and Relays can put
+ * an explainer button on the right.
+ */
+@Composable
+fun ScreenHeader(
+    title: @Composable RowScope.() -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, content = title)
+        Row(verticalAlignment = Alignment.CenterVertically, content = actions)
+    }
+}
 
 /**
  * Shows a transient message. A publish result is rendered in full — which relays

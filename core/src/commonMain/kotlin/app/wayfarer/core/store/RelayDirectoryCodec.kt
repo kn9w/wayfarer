@@ -22,6 +22,13 @@ import app.wayfarer.core.relay.RelayDirectoryStore
  *   G<TAB>url<TAB>read<TAB>write
  *   P<TAB>url<TAB>firstSeen<TAB>lastSeen<TAB>SOURCE:detail<TAB>SOURCE:detail…
  *   D<TAB>url
+ *   F<TAB>url
+ *
+ * `F` is a record type rather than a fifth column on `G`, and that is load
+ * bearing. `G` parses its booleans with `?: continue`, so a column older builds
+ * did not write would drop every grant on downgrade; `P` is open-ended from
+ * index 4, so nothing can be appended there at all. A new line type is the only
+ * shape that leaves existing files byte-for-byte readable in both directions.
  */
 class RelayDirectoryCodec(
     private val normalizer: RelayUrlNormalizer,
@@ -41,6 +48,9 @@ class RelayDirectoryCodec(
             for (denied in snapshot.denied.sorted()) {
                 append("D\t").append(denied.url).append('\n')
             }
+            for (favourite in snapshot.favourites.sorted()) {
+                append("F\t").append(favourite.url).append('\n')
+            }
         }
 
     fun decode(text: String?): RelayDirectorySnapshot {
@@ -49,6 +59,7 @@ class RelayDirectoryCodec(
         val grants = mutableMapOf<RelayUrl, RelayGrant>()
         val pending = mutableMapOf<RelayUrl, PendingRelay>()
         val denied = mutableSetOf<RelayUrl>()
+        val favourites = mutableSetOf<RelayUrl>()
 
         for (line in text.lineSequence()) {
             val parts = line.split('\t')
@@ -66,6 +77,7 @@ class RelayDirectoryCodec(
                     pending[url] = PendingRelay(url, reasons, first, last)
                 }
                 "D" -> denied += url
+                "F" -> favourites += url
             }
         }
 
@@ -76,6 +88,7 @@ class RelayDirectoryCodec(
             grants = grants,
             pending = pending - grants.keys,
             denied = denied - grants.keys,
+            favourites = favourites,
         )
     }
 

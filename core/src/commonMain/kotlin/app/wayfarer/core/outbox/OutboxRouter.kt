@@ -47,6 +47,15 @@ class OutboxRouter(
     private val relayLists: RelayListCache,
     private val directory: RelayDirectory,
     private val config: OutboxConfig = OutboxConfig(),
+    /**
+     * Names a pubkey for the reason strings shown on the relay screen.
+     *
+     * Injected rather than calling [PubKey.abbreviated], which is hex: these
+     * strings are read by a person deciding whether to allow a relay, and a
+     * truncated hex key tells them nothing they can recognise. Defaults to hex
+     * only so tests and non-UI callers need not supply a bech32 codec.
+     */
+    private val describe: (PubKey) -> String = { it.abbreviated() },
 ) {
     data class ReadPlan(
         val plan: Map<RelayUrl, List<ReqFilter>>,
@@ -101,7 +110,7 @@ class OutboxRouter(
                     directory
                         .readable(
                             advertised,
-                            DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "write relay of ${author.abbreviated()}"),
+                            DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "write relay of ${describe(author)}"),
                         ).toList()
                 }
         }
@@ -164,7 +173,7 @@ class OutboxRouter(
                 directory
                     .writable(
                         theirInbox,
-                        DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "inbox relay of ${mentioned.abbreviated()}"),
+                        DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "inbox relay of ${describe(mentioned)}"),
                     ).take(config.inboxRelaysPerMention)
         }
 
@@ -190,6 +199,32 @@ class OutboxRouter(
 
         val filter = ReqFilter(kinds = kinds, tags = mapOf("p" to listOf(me.hex)), limit = limitPerRelay)
         return relays.associateWith { listOf(filter) }
+    }
+
+    /**
+     * Asks named relays directly, for the one case the outbox model has no
+     * opinion about: the user has pointed at a relay and wants to see what is on
+     * it.
+     *
+     * Not a hole in the routing rules — it is still the directory that decides
+     * whether each relay may be read, and the plan can only ever name relays the
+     * user approved. What it skips is the *author* half: there is no author to
+     * route by, which is exactly why the UI has to label this as browsing one
+     * relay rather than as a routed feed.
+     */
+    suspend fun relayPlanFor(
+        relays: Collection<RelayUrl>,
+        kinds: List<Int>,
+        limitPerRelay: Int? = null,
+        since: Long? = null,
+        /** NIP-01 tag filters, e.g. `#e` for the replies to one event. */
+        tags: Map<String, List<String>>? = null,
+        reason: DiscoveryReason = DiscoveryReason(DiscoverySource.USER_ENTERED, "you asked to browse it"),
+    ): Map<RelayUrl, List<ReqFilter>> {
+        val allowed = directory.readable(relays, reason)
+        if (allowed.isEmpty()) return emptyMap()
+        val filter = ReqFilter(kinds = kinds, tags = tags, since = since, limit = limitPerRelay)
+        return allowed.associateWith { listOf(filter) }
     }
 
     /**
