@@ -1,0 +1,176 @@
+package app.wayfarer.android.ui.screen
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.viewmodel.AppController
+import app.wayfarer.android.viewmodel.Screen
+import app.wayfarer.core.model.Article
+
+/** A long-form article in a list: title, summary, and what it is. */
+@Composable
+fun ArticleCard(
+    article: Article,
+    authorName: String,
+    onOpen: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("long-form article", style = MaterialTheme.typography.labelSmall)
+            Text(article.title, style = MaterialTheme.typography.titleMedium)
+            article.summary?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            Text(authorName, style = MaterialTheme.typography.labelMedium)
+            Text(
+                "seen on " + article.seenOn.joinToString(", ") { it.display() }.ifBlank { "this device" },
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+@Composable
+fun ReadArticleScreen(
+    controller: AppController,
+    address: String,
+) {
+    val articles by controller.articles.collectAsStateWithLifecycle()
+    val account by controller.account.collectAsStateWithLifecycle()
+    val article = articles.firstOrNull { it.address == address }
+
+    if (article == null) {
+        Text("This article is no longer loaded.", Modifier.padding(12.dp))
+        return
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(article.title, style = MaterialTheme.typography.headlineSmall)
+        article.summary?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+        Text(
+            controller.profileFor(article.author)?.bestName() ?: article.author.abbreviated(),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        // NIP-23 bodies are markdown. Rendering it properly would mean a markdown
+        // dependency; the raw text is honest and costs nothing.
+        Text(article.content, style = MaterialTheme.typography.bodyMedium)
+
+        if (account?.pubKey == article.author) {
+            Button(onClick = { controller.go(Screen.EditArticle(article.address)) }) {
+                Text("Edit this article")
+            }
+        }
+    }
+}
+
+@Composable
+fun EditArticleScreen(
+    controller: AppController,
+    address: String?,
+) {
+    val busy by controller.busy.collectAsStateWithLifecycle()
+    val initial = remember(address) { controller.articleDraft(address) }
+    var draft by remember(address) { mutableStateOf(initial) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = draft.title,
+            onValueChange = { draft = draft.copy(title = it) },
+            label = { Text("Title") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = draft.summary,
+            onValueChange = { draft = draft.copy(summary = it) },
+            label = { Text("Summary") },
+            minLines = 2,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = draft.image,
+            onValueChange = { draft = draft.copy(image = it) },
+            label = { Text("Header image URL") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = draft.content,
+            onValueChange = { draft = draft.copy(content = it) },
+            label = { Text("Body (markdown)") },
+            minLines = 10,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Text(
+            if (draft.dTag.isBlank()) {
+                "Publishing creates a new article at a fresh address."
+            } else {
+                "Publishing replaces the existing article at ${draft.dTag}."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { controller.publishArticle(draft) },
+                enabled = !busy && draft.title.isNotBlank() && draft.content.isNotBlank(),
+            ) { Text("Publish") }
+            TextButton(onClick = { controller.go(Screen.Home) }) { Text("Cancel") }
+        }
+    }
+}
+
+/** The signed-in account's own articles, with a button to write another. */
+@Composable
+fun ArticleListScreen(controller: AppController) {
+    val articles by controller.articles.collectAsStateWithLifecycle()
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Button(onClick = { controller.go(Screen.EditArticle(null)) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Write an article")
+            }
+        }
+        items(articles.size) { index ->
+            val article = articles[index]
+            ArticleCard(
+                article = article,
+                authorName = controller.profileFor(article.author)?.bestName() ?: article.author.abbreviated(),
+                onOpen = { controller.go(Screen.ReadArticle(article.address)) },
+            )
+        }
+    }
+}

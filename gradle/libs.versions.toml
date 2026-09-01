@@ -1,0 +1,49 @@
+# Single source of truth for every third-party version in the project.
+#
+# The three androidx / AGP entries below could not be verified against Google's
+# Maven repository from the machine this was authored on (dl.google.com was not
+# reachable). They are the only versions in this file that may need a bump.
+[versions]
+agp = "8.13.0"
+kotlin = "2.4.10"
+coroutines = "1.11.0"
+
+# Quartz. This is the ONLY nostr dependency; everything under com.vitorpamplona.*
+# arrives through it. See README "What is used from Quartz".
+quartz = "1.14.0"
+okhttp = "5.5.0"
+
+androidxCore = "1.17.0"
+androidxActivity = "1.11.0"
+androidxLifecycle = "2.9.4"
+composeBom = "2025.09.00"
+
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
+
+[libraries]
+quartz = { module = "com.vitorpamplona.quartz:quartz", version.ref = "quartz" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
+
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
