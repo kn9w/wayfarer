@@ -231,7 +231,12 @@ private fun StatusCard(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Your list is published", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Last published ${controller.timeAgo(publishedAt)}. Other people's apps read this to find you.",
+                            // Bound rather than asserted: a list can be known to
+                            // exist without its timestamp having been read yet,
+                            // and a crash is a worse answer than a sentence.
+                            publishedAt
+                                ?.let { "Last published ${controller.timeAgo(it)}. " }
+                                .orEmpty() + "Other people's apps read this to find you.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }

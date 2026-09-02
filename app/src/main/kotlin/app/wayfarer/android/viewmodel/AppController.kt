@@ -976,6 +976,14 @@ class AppController(
      * cannot be a shortened npub in one place and truncated hex in another —
      * which is what happened when each call site picked its own fallback.
      */
+    /** What "active" means on the Global screen, in days. */
+    val activityWindowDays: StateFlow<Int> get() = core.preferences.activityWindowDays
+
+    fun setActivityWindowDays(days: Int) =
+        scope.launch {
+            core.preferences.setActivityWindowDays(days)
+        }
+
     /** How old a post is, against the same clock the rest of the app uses. */
     fun timeAgo(createdAt: Long): String = formatTimestamp(createdAt, core.clock.nowSeconds())
 

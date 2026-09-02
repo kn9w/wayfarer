@@ -12,6 +12,7 @@ import app.wayfarer.core.repo.ThreadRepository
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -135,7 +136,7 @@ class ThreadRepositoryTest {
         }
 
     @Test
-    fun `loading asks for both threading conventions at once`() =
+    fun `loading asks for each threading convention in its own filter`() =
         runTest {
             val transport = FakeTransport()
             val directory = RelayDirectory(clock)
@@ -143,16 +144,44 @@ class ThreadRepositoryTest {
 
             repo(transport, directory).load(ThreadRef.Event(rootNote))
 
-            val filters = transport.fetched.single().getValue(relay("open.example")).single()
-            assertEquals(listOf(EventKind.COMMENT, EventKind.TEXT_NOTE), filters.kinds)
-            // Uppercase E is a NIP-22 root, lowercase e a NIP-10 target. Asking
-            // for only one hides half of every conversation.
-            assertEquals(listOf(rootNote.hex), filters.tags?.get("E"))
-            assertEquals(listOf(rootNote.hex), filters.tags?.get("e"))
+            val filters = transport.fetched.single().getValue(relay("open.example"))
+
+            // Two filters, not one. NIP-01 ANDs the conditions inside a filter
+            // and ORs separate filters, so "#E or #e" has to be two — asking for
+            // both in one demands an event carrying both, which a NIP-10 reply
+            // never is. This is the bug the previous version of this test
+            // asserted *for*, by checking a single filter held both keys.
+            assertEquals(2, filters.size)
+
+            val comments = filters.single { it.kinds == listOf(EventKind.COMMENT) }
+            assertEquals(listOf(rootNote.hex), comments.tags?.get("E"))
+
+            val replies = filters.single { it.kinds == listOf(EventKind.TEXT_NOTE) }
+            assertEquals(listOf(rootNote.hex), replies.tags?.get("e"))
         }
 
     @Test
-    fun `an article thread is asked for by address, not by event id`() =
+    fun `no filter mixes an uppercase and a lowercase tag condition`() =
+        runTest {
+            val transport = FakeTransport()
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("open.example"), read = true, write = false)
+
+            repo(transport, directory).load(ThreadRef.Event(rootNote))
+
+            // The general form of the mistake: any single filter naming both a
+            // root-scope tag and a parent tag matches only events carrying both.
+            for (filter in transport.fetched.single().getValue(relay("open.example"))) {
+                val names = filter.tags.orEmpty().keys
+                assertTrue(
+                    names.none { it.first().isUpperCase() } || names.none { it.first().isLowerCase() },
+                    "a filter asking for $names would be ANDed into matching almost nothing",
+                )
+            }
+        }
+
+    @Test
+    fun `an article thread is asked for by address alone`() =
         runTest {
             val transport = FakeTransport()
             val directory = RelayDirectory(clock)
@@ -161,8 +190,49 @@ class ThreadRepositoryTest {
 
             repo(transport, directory).load(ThreadRef.Address(address))
 
-            val filters = transport.fetched.single().getValue(relay("open.example")).single()
-            assertEquals(listOf(address), filters.tags?.get("A"))
-            assertEquals(listOf(address), filters.tags?.get("a"))
+            // One filter: NIP-10 threads events, and an article is addressed by
+            // kind:pubkey:d, so there is no kind 1 counterpart to ask for.
+            val filter = transport.fetched.single().getValue(relay("open.example")).single()
+            assertEquals(listOf(EventKind.COMMENT), filter.kinds)
+            assertEquals(listOf(address), filter.tags?.get("A"))
+            assertNull(filter.tags?.get("a"), "the parent tag would AND this into matching only top-level comments")
         }
+
+    // ---- legacy replies, which is what regressed --------------------------
+
+    @Test
+    fun `a direct kind 1 reply appears under the note it answers`() {
+        val threads = repo(FakeTransport())
+
+        threads.absorb(nip10Reply("aa", alice, rootNote, createdAt = 100, text = "direct"), null)
+
+        assertEquals(listOf("direct"), threads.threadUnder(ThreadRef.Event(rootNote)).map { it.content })
+    }
+
+    @Test
+    fun `a reply to a reply still appears under the thread root`() {
+        val threads = repo(FakeTransport())
+        val firstReply = EventId("aa".repeat(32))
+
+        // NIP-10 marks both: the conversation's origin, and the post being
+        // answered. replyTo is the latter, so filtering a thread by replyTo
+        // alone dropped this one after fetching it.
+        val nested =
+            NostrEvent(
+                id = EventId("bb".repeat(32)),
+                pubKey = bob,
+                createdAt = 200,
+                kind = EventKind.TEXT_NOTE,
+                tags =
+                    listOf(
+                        listOf("e", rootNote.hex, "", "root"),
+                        listOf("e", firstReply.hex, "", "reply"),
+                    ),
+                content = "nested",
+                sig = "0".repeat(128),
+            )
+        threads.absorb(nested, null)
+
+        assertEquals(listOf("nested"), threads.threadUnder(ThreadRef.Event(rootNote)).map { it.content })
+    }
 }

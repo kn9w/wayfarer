@@ -417,4 +417,42 @@ class GlobalControllerTest {
 
             assertEquals(listOf(plain, starred), global.state.value.relays)
         }
+
+    // ---- the activity window, now a setting -------------------------------
+
+    @Test
+    fun `the activity window comes from settings, not a constant`() =
+        runTest {
+            val core = wayfarer()
+            core.follows(alice)
+            core.note(alice, "three days ago", clock.now - 3 * day)
+            val global = GlobalController(core, TestScope(testScheduler))
+            global.setActivity(ActivityFilter.ActiveRecently)
+            runCurrent()
+
+            // Default is a week, so three days ago is active.
+            assertEquals(listOf(alice), global.state.value.rotation)
+
+            core.preferences.setActivityWindowDays(1)
+            runCurrent()
+            assertTrue(global.state.value.rotation.isEmpty(), "a one-day window makes three days ago quiet")
+
+            core.preferences.setActivityWindowDays(30)
+            runCurrent()
+            assertEquals(listOf(alice), global.state.value.rotation, "a thirty-day window makes them active again")
+        }
+
+    @Test
+    fun `narrowing the window moves somebody into the quiet list`() =
+        runTest {
+            val core = wayfarer()
+            core.follows(alice)
+            core.note(alice, "three days ago", clock.now - 3 * day)
+            val global = GlobalController(core, TestScope(testScheduler))
+            global.setActivity(ActivityFilter.QuietRecently)
+            core.preferences.setActivityWindowDays(1)
+            runCurrent()
+
+            assertEquals(listOf(alice), global.state.value.rotation)
+        }
 }

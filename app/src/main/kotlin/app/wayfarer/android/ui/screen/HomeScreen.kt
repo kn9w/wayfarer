@@ -85,12 +85,14 @@ internal val PostHorizontalPadding = 16.dp
 fun HomeScreen(controller: AppController) {
     val global by controller.global.state.collectAsStateWithLifecycle()
     val refreshing by controller.refreshing.collectAsStateWithLifecycle()
+    val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
 
     var filtering by remember { mutableStateOf(false) }
 
     if (filtering) {
         FilterSheet(
             state = global,
+            windowDays = if (activityWindow == 1) "day" else "$activityWindow days",
             onDismiss = { filtering = false },
             onOrder = controller.global::setOrder,
             onActivity = controller.global::setActivity,
@@ -446,6 +448,7 @@ fun PagingBar(controller: AppController) {
 @Composable
 private fun FilterSheet(
     state: GlobalState,
+    windowDays: String,
     onDismiss: () -> Unit,
     onOrder: (BrowseOrder) -> Unit,
     onActivity: (ActivityFilter) -> Unit,
@@ -502,9 +505,9 @@ private fun FilterSheet(
                     )
                 }
                 Text(
-                    "Active means they have posted in the last 7 days; quiet means they have not. Judged only " +
-                        "from what Wayfarer has actually fetched — somebody posting to relays you have not " +
-                        "allowed will look quiet.",
+                    "Active means they have posted in the last $windowDays; quiet means they have not. Judged " +
+                        "only from what Wayfarer has actually fetched — somebody posting to relays you have not " +
+                        "allowed will look quiet. The window is set in Settings.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

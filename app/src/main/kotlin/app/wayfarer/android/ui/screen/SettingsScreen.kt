@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -27,6 +29,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.core.repo.ACTIVITY_WINDOW_CHOICES
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.core.repo.Credential
@@ -91,6 +94,8 @@ fun SettingsScreen(controller: AppController) {
             dismissButton = { TextButton(onClick = { confirmingLogout = false }) { Text("Cancel") } },
         )
     }
+
+    val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = { Text("Settings", style = MaterialTheme.typography.titleLarge) })
@@ -173,6 +178,34 @@ fun SettingsScreen(controller: AppController) {
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
+
+            HorizontalDivider()
+            Text("Browsing", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "How recently somebody must have posted to count as active, for the activity filter on the " +
+                    "Global screen.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            ) {
+                for (days in ACTIVITY_WINDOW_CHOICES) {
+                    FilterChip(
+                        selected = days == activityWindow,
+                        onClick = { controller.setActivityWindowDays(days) },
+                        label = { Text(if (days == 1) "1 day" else "$days days") },
+                    )
+                }
+            }
+            Text(
+                // The same caveat the funnel carries: this is judged from what
+                // has been fetched, not from what exists.
+                "Judged only from posts Wayfarer has actually fetched — somebody publishing to relays you have " +
+                    "not allowed will look quiet however often they write.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             HorizontalDivider()
             Text("Relays", style = MaterialTheme.typography.titleMedium)

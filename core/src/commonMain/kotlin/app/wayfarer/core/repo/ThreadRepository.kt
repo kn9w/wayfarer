@@ -14,6 +14,7 @@ import app.wayfarer.core.model.UnsignedEvent
 import app.wayfarer.core.nostr.EventSigner
 import app.wayfarer.core.nostr.NostrCodec
 import app.wayfarer.core.nostr.RelayTransport
+import app.wayfarer.core.nostr.ReqFilter
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.util.Clock
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +62,10 @@ class ThreadRepository(
                 .map { ThreadEntry(it.id, it.author, it.createdAt, it.content, it.seenOn, isComment = true) }
         val fromReplies =
             replies.value.values
-                .filter { root is ThreadRef.Event && it.replyTo == root.id }
+                // threadRoot as well as replyTo: a reply to a reply names its
+                // parent in replyTo, so matching on that alone fetched nested
+                // replies and then dropped them before the screen.
+                .filter { root is ThreadRef.Event && (it.threadRoot == root.id || it.replyTo == root.id) }
                 .map { ThreadEntry(it.id, it.author, it.createdAt, it.content, it.seenOn, isComment = false) }
         return (fromComments + fromReplies).sortedBy { it.createdAt }
     }
@@ -76,10 +80,9 @@ class ThreadRepository(
      */
     suspend fun load(root: ThreadRef): Int {
         val plan =
-            router.relayPlanFor(
+            router.planFor(
                 relays = router.discoveryRelays(),
-                kinds = listOf(EventKind.COMMENT, EventKind.TEXT_NOTE),
-                tags = tagFilterFor(root) ?: return 0,
+                filters = filtersFor(root),
                 reason = DiscoveryReason(DiscoverySource.USER_ENTERED, "you opened a conversation"),
             )
         if (plan.isEmpty()) return 0
@@ -92,18 +95,32 @@ class ThreadRepository(
     }
 
     /**
-     * A filter that names [root] in every tag a reply to it could use.
+     * One filter per convention, never one filter for both.
      *
-     * `E` and `e` are listed separately rather than folded together because
-     * relays match tag filters by exact tag name, and the case carries the
-     * meaning: `E` is the root of a NIP-22 thread, `e` the parent of one or the
-     * target of a NIP-10 reply.
+     * NIP-01: conditions inside a filter are ANDed, separate filters are ORed.
+     * Asking for `#E` and `#e` together — which this did — demands an event
+     * carrying both tags pointed at the root, and almost nothing carries both: a
+     * NIP-10 reply has only `e`, and a nested NIP-22 comment has `E` for the
+     * root and `e` for its parent. Only a top-level comment, where the two
+     * coincide, ever matched, so every legacy reply was invisible.
+     *
+     * Uppercase gathers the NIP-22 side at any depth, because the root scope
+     * does not move as a thread deepens. Lowercase `e` gathers kind 1 replies,
+     * which name the thread root in an e-tag whether direct or nested.
      */
-    private fun tagFilterFor(root: ThreadRef): Map<String, List<String>>? =
+    private fun filtersFor(root: ThreadRef): List<ReqFilter> =
         when (root) {
-            is ThreadRef.Event -> mapOf("E" to listOf(root.id.hex), "e" to listOf(root.id.hex))
-            is ThreadRef.Address -> mapOf("A" to listOf(root.address), "a" to listOf(root.address))
-            is ThreadRef.External -> mapOf("I" to listOf(root.value), "i" to listOf(root.value))
+            is ThreadRef.Event ->
+                listOf(
+                    ReqFilter(kinds = listOf(EventKind.COMMENT), tags = mapOf("E" to listOf(root.id.hex))),
+                    ReqFilter(kinds = listOf(EventKind.TEXT_NOTE), tags = mapOf("e" to listOf(root.id.hex))),
+                )
+            // No kind 1 counterpart: NIP-10 threads events, and an article is
+            // addressed by `kind:pubkey:d` rather than by any single event.
+            is ThreadRef.Address ->
+                listOf(ReqFilter(kinds = listOf(EventKind.COMMENT), tags = mapOf("A" to listOf(root.address))))
+            is ThreadRef.External ->
+                listOf(ReqFilter(kinds = listOf(EventKind.COMMENT), tags = mapOf("I" to listOf(root.value))))
         }
 
     /**

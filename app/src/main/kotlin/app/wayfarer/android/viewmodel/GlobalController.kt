@@ -143,6 +143,7 @@ class GlobalController(
             ) { follows, notes, articles, directory ->
                 Sources(follows, notes.values.toList(), articles.values.toList(), directory)
             },
+            core.preferences.activityWindowDays,
             ::build,
         ).stateIn(scope, SharingStarted.Eagerly, GlobalState())
 
@@ -170,12 +171,18 @@ class GlobalController(
         selection: Selection,
         cursor: Cursor,
         sources: Sources,
+        activityWindowDays: Int,
     ): GlobalState {
         val follows = sources.follows
         val notes = sources.notes
         val articles = sources.articles
 
-        val rotation = rotationFrom(follows, notes, articles, selection.activity, selection.order, selection.seed)
+        val rotation =
+            rotationFrom(
+                follows, notes, articles,
+                selection.activity, selection.order, selection.seed,
+                daysToSeconds(activityWindowDays),
+            )
         val hidden = follows.size - rotation.size
 
         // Keep the reader where they are if that person survived the filter;
@@ -234,10 +241,11 @@ class GlobalController(
         activity: ActivityFilter,
         order: BrowseOrder,
         seed: Long,
+        windowSeconds: Long,
     ): List<PubKey> {
         val recency = latestPostByAuthor(notes, articles)
         val now = core.clock.nowSeconds()
-        val eligible = follows.filter { activity.accepts(recency[it], now) }
+        val eligible = follows.filter { activity.accepts(recency[it], now, windowSeconds) }
         return when (order) {
             // Whoever wrote most recently first — the closest this shape gets to
             // "what is new", given the arrows step through people.
@@ -333,6 +341,7 @@ class GlobalController(
                     activityState.value,
                     orderState.value,
                     seedState.value,
+                    daysToSeconds(core.preferences.activityWindowDays.value),
                 )
             return personState.value?.takeIf { it in rotation } ?: rotation.firstOrNull()
         }
@@ -374,17 +383,18 @@ fun latestPostByAuthor(
         for (article in articles) keepNewest(article.author, article.publishedAt)
     }
 
-/** Seven days, in the seconds every nostr timestamp is measured in. */
-const val ACTIVITY_WINDOW_SECONDS: Long = 7L * 24 * 60 * 60
-
 fun ActivityFilter.accepts(
     latestPostAt: Long?,
     now: Long,
+    /** How long somebody may be silent and still count as active. */
+    windowSeconds: Long,
 ): Boolean =
     when (this) {
         ActivityFilter.Any -> true
         // Nothing fetched at all is not evidence of activity, so an author we
         // have never seen a post from is quiet rather than active.
-        ActivityFilter.ActiveRecently -> latestPostAt != null && now - latestPostAt <= ACTIVITY_WINDOW_SECONDS
-        ActivityFilter.QuietRecently -> latestPostAt == null || now - latestPostAt > ACTIVITY_WINDOW_SECONDS
+        ActivityFilter.ActiveRecently -> latestPostAt != null && now - latestPostAt <= windowSeconds
+        ActivityFilter.QuietRecently -> latestPostAt == null || now - latestPostAt > windowSeconds
     }
+
+fun daysToSeconds(days: Int): Long = days.toLong() * 24 * 60 * 60

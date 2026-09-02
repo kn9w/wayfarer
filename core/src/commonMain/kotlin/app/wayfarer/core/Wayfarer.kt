@@ -17,6 +17,7 @@ import app.wayfarer.core.repo.ArticleRepository
 import app.wayfarer.core.repo.ContactRepository
 import app.wayfarer.core.repo.FeedRepository
 import app.wayfarer.core.repo.OnboardingStore
+import app.wayfarer.core.repo.PreferencesStore
 import app.wayfarer.core.repo.ProfileRepository
 import app.wayfarer.core.repo.RelayListRepository
 import app.wayfarer.core.repo.ThreadRepository
@@ -75,6 +76,8 @@ class Wayfarer private constructor(
     val normalizer: RelayUrlNormalizer,
     val bech32: Bech32Codec,
     val onboarding: OnboardingStore,
+    /** Settings the user can change. */
+    val preferences: PreferencesStore,
     /**
      * The wall clock the repositories were built with.
      *
@@ -171,6 +174,7 @@ class Wayfarer private constructor(
                 normalizer = backend.normalizer,
                 bech32 = backend.bech32,
                 onboarding = OnboardingStore(settings),
+                preferences = PreferencesStore(settings).also { it.load() },
                 clock = backend.clock,
                 suggestedRelays = suggested,
             )

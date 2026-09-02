@@ -228,6 +228,26 @@ class OutboxRouter(
     }
 
     /**
+     * A plan carrying several filters per relay.
+     *
+     * NIP-01 ANDs the conditions inside one filter and ORs separate filters, so
+     * anything that means "either of these shapes" — a conversation, which is
+     * NIP-22 comments *or* NIP-10 replies — has to be several filters. Folding
+     * them into one filter with two tag conditions asks for events carrying
+     * both, which almost nothing is.
+     */
+    suspend fun planFor(
+        relays: Collection<RelayUrl>,
+        filters: List<ReqFilter>,
+        reason: DiscoveryReason,
+    ): Map<RelayUrl, List<ReqFilter>> {
+        if (filters.isEmpty()) return emptyMap()
+        val allowed = directory.readable(relays, reason)
+        if (allowed.isEmpty()) return emptyMap()
+        return allowed.associateWith { filters }
+    }
+
+    /**
      * Where to look for things we cannot route yet — an author's kind 10002 and
      * kind 0 when we have never seen either. Uses every approved read relay,
      * because by definition there is no better-informed choice available.
