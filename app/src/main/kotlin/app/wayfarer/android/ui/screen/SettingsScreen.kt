@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.core.repo.ACTIVITY_WINDOW_CHOICES
 import app.wayfarer.core.repo.HeaderStyle
@@ -45,6 +46,11 @@ import app.wayfarer.core.repo.Credential
  */
 @Composable
 fun SettingsScreen(controller: AppController) {
+    // The key can be put on this screen, so the screen stays off every capture
+    // path — including the recents snapshot, which the lock screen in front of
+    // the reveal cannot help with.
+    SecureScreen()
+
     val account by controller.account.collectAsStateWithLifecycle()
     val revealed by controller.revealedSecretKey.collectAsStateWithLifecycle()
     val busy by controller.busy.collectAsStateWithLifecycle()

@@ -12,7 +12,13 @@ import kotlinx.coroutines.flow.asStateFlow
  * The counterpart to the relay permission list, and for the same reason: a
  * kind 3 follow is a public statement, signed and broadcast, and there are
  * people a reader wants to read without announcing it. Nothing here is ever
- * published — it produces no event, and no relay is told about it.
+ * published: it produces no event, and no other client can enumerate this list.
+ *
+ * What it does not do is hide the names from the relays this app talks to.
+ * Reading somebody's posts means asking a relay for them by pubkey, so a relay
+ * serving the feed sees every author on this list in the `authors` filter, the
+ * same as it sees the published ones. The privacy this buys is from other
+ * *users*, not from the relay operator — see [FollowBook].
  *
  * Kept per account. The list is keyed by the pubkey that owns it, so signing in
  * as somebody else shows their list rather than inheriting the last one, and

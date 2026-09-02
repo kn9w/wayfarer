@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.MessageBanner
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Introduction
@@ -232,6 +233,9 @@ fun BackupScreen(
     nsec: String,
     onContinue: () -> Unit,
 ) {
+    // A freshly generated key is on screen here, so nothing may capture it.
+    SecureScreen()
+
     var acknowledged by remember { mutableStateOf(false) }
 
     Page {

@@ -14,10 +14,19 @@ import app.wayfarer.core.relay.RelayDirectoryStore
  *
  * A hand-written format rather than a JSON library: this is the core module,
  * which carries no serialization dependency, and the shape is three flat record
- * types. Fields are tab-separated and every field is either an enum name, a
- * number, or a URL, none of which can contain a tab — so no escaping is needed.
+ * types. Records are newline-separated and fields tab-separated.
  * Unparseable lines are skipped rather than failing the load, so a forward-
  * compatible field added later cannot lock a user out of their own settings.
+ *
+ * One field is not an enum name, a number or a URL: a pending relay's reason
+ * [DiscoveryReason.detail] is free text, written to be read by a person deciding
+ * whether to allow a relay. Every caller today passes an npub or a fixed string,
+ * but the field exists precisely to become more descriptive — a display name
+ * taken from a kind 0, say — and a display name is written by whoever the user
+ * is reading. A newline in it would close the record and let the rest parse as a
+ * new line of its own choosing, including a `G` line, which is a *granted*
+ * relay. So [sanitize] strips both separators from that one field: the format's
+ * safety must not depend on what a future caller happens to pass.
  *
  *   G<TAB>url<TAB>read<TAB>write
  *   P<TAB>url<TAB>firstSeen<TAB>lastSeen<TAB>SOURCE:detail<TAB>SOURCE:detail…
@@ -41,7 +50,7 @@ class RelayDirectoryCodec(
             for (pending in snapshot.pending.values.sortedBy { it.url }) {
                 append("P\t").append(pending.url.url).append('\t').append(pending.firstSeenAt).append('\t').append(pending.lastSeenAt)
                 for (reason in pending.reasons) {
-                    append('\t').append(reason.source.name).append(':').append(reason.detail?.replace('\t', ' ').orEmpty())
+                    append('\t').append(reason.source.name).append(':').append(sanitize(reason.detail))
                 }
                 append('\n')
             }
@@ -91,6 +100,16 @@ class RelayDirectoryCodec(
             favourites = favourites,
         )
     }
+
+    /**
+     * Makes free text safe to carry in one field of one record.
+     *
+     * Both separators become spaces rather than being dropped, so the text stays
+     * readable and its length is unchanged — a relay named "a\nb" reads as
+     * "a b" rather than silently becoming "ab".
+     */
+    private fun sanitize(detail: String?): String =
+        detail.orEmpty().map { if (it == '\t' || it == '\n' || it == '\r') ' ' else it }.joinToString("")
 
     private fun decodeReason(field: String): DiscoveryReason? {
         val separator = field.indexOf(':')

@@ -123,9 +123,40 @@ class Nip55Signer(
             is Nip55Protocol.Reply.Ok ->
                 reply.event
                     ?.let(codec::decodeEvent)
+                    ?.also { checkMatches(it, unsigned) }
                     ?: throw IllegalStateException("The signer app returned no signed event")
             Nip55Protocol.Reply.Rejected -> throw SigningRejected()
             is Nip55Protocol.Reply.Failed -> throw IllegalStateException(reply.message)
+        }
+    }
+
+    /**
+     * Checks that the signer signed what it was asked to sign.
+     *
+     * A signer holds the key, so this is not a defence against a malicious one
+     * getting hold of it — but the trust that has to be extended is narrower
+     * than "publish whatever comes back". Any installed app can register the
+     * `nostrsigner` scheme and appear in the chooser, and [decodeEvent] only
+     * parses: without this, an event that is not the user's, or not the note
+     * they wrote, would be published under their identity with nothing to
+     * contradict it.
+     *
+     * Tags are deliberately not compared. Signers legitimately add their own —
+     * a client tag is the common case — and rejecting those would break working
+     * setups to catch nothing that the pubkey and signature checks miss.
+     */
+    private fun checkMatches(
+        signed: NostrEvent,
+        asked: UnsignedEvent,
+    ) {
+        if (signed.pubKey.hex != pubKeyHex) {
+            throw IllegalStateException("The signer app returned an event signed by a different account")
+        }
+        if (signed.kind != asked.kind || signed.content != asked.content) {
+            throw IllegalStateException("The signer app returned a different event than the one it was asked to sign")
+        }
+        if (!codec.verify(signed)) {
+            throw IllegalStateException("The signer app returned an event whose signature does not check out")
         }
     }
 }

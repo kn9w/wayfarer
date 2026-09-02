@@ -89,9 +89,16 @@ class ProfileRepository(
         }
     }
 
-    /** Files a kind 0 into the cache, newest-wins. Ignores other kinds. */
+    /**
+     * Files a kind 0 into the cache, newest-wins. Ignores other kinds.
+     *
+     * Verified first: a profile is the name, picture and lightning address the
+     * whole UI shows for a person, so an unverified one lets any relay the user
+     * reads through impersonate anybody to them.
+     */
     fun absorb(event: NostrEvent) {
         if (event.kind != EventKind.METADATA) return
+        if (!codec.verify(event)) return
         val parsed = codec.readProfile(event) ?: return
 
         val existing = state.value[event.pubKey]

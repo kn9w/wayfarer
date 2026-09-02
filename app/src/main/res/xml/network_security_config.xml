@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Every connection this app makes is TLS, and it is stated here rather than
+    inherited.
+
+    Blocking cleartext is already the platform default for an app targeting API
+    28 or above, so today this file changes no behaviour. It exists because that
+    default is a property of the target SDK rather than of this app: lowering
+    targetSdk would silently re-permit `ws://` and plain-HTTP NIP-11 fetches,
+    which for an app whose relay list is a consent record is a guarantee that
+    should not be able to lapse quietly.
+
+    Nothing is exempted. There is no debug-only override and no trust-anchor
+    block adding user-installed CAs, so a proxy cannot be interposed on relay
+    traffic by dropping a certificate into the user store.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

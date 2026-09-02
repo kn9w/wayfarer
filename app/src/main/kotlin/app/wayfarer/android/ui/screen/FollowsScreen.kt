@@ -56,8 +56,9 @@ fun FollowsScreen(controller: AppController) {
                     Text("Two ways to follow", style = MaterialTheme.typography.titleSmall)
                     Text(
                         "A public follow is a signed note listing everybody you follow, which every other client can " +
-                            "read. A follow kept on this phone is published nowhere and told to no relay — it only " +
-                            "decides what Wayfarer fetches for you.",
+                            "read. A follow kept on this phone is never published, so no other client can see it. " +
+                            "The relays you read through are a different matter: Wayfarer has to ask them for that " +
+                            "person's posts by name, so those relays can still tell who you are reading.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

@@ -40,6 +40,62 @@ class RelayDirectoryCodecTest {
     }
 
     @Test
+    fun `a newline in a reason cannot forge a record`() {
+        val snapshot =
+            RelayDirectorySnapshot(
+                pending =
+                    mapOf(
+                        relay("maybe.example") to
+                            PendingRelay(
+                                url = relay("maybe.example"),
+                                reasons =
+                                    setOf(
+                                        // What a hostile display name would look like once
+                                        // reason details name people rather than npubs: close
+                                        // the record, then open a `G` line, which is a grant.
+                                        DiscoveryReason(
+                                            DiscoverySource.AUTHOR_RELAY_LIST,
+                                            "relay list of Alice\nG\twss://evil.example/\ttrue\ttrue",
+                                        ),
+                                    ),
+                                firstSeenAt = 100,
+                                lastSeenAt = 200,
+                            ),
+                    ),
+            )
+
+        val decoded = codec.decode(codec.encode(snapshot))
+
+        // The injected relay must not have become an approved one — the whole
+        // consent model is downstream of this map.
+        assertTrue(decoded.grants.isEmpty())
+        assertFalse(relay("evil.example") in decoded.grants)
+        assertEquals(setOf(relay("maybe.example")), decoded.pending.keys)
+    }
+
+    @Test
+    fun `a tab in a reason cannot forge a field`() {
+        val snapshot =
+            RelayDirectorySnapshot(
+                pending =
+                    mapOf(
+                        relay("maybe.example") to
+                            PendingRelay(
+                                url = relay("maybe.example"),
+                                reasons = setOf(DiscoveryReason(DiscoverySource.EVENT_HINT, "named\tby\tthe link")),
+                                firstSeenAt = 100,
+                                lastSeenAt = 200,
+                            ),
+                    ),
+            )
+
+        val decoded = codec.decode(codec.encode(snapshot))
+
+        // One reason in, one reason out: the tabs must not have split it into three.
+        assertEquals(1, decoded.pending.getValue(relay("maybe.example")).reasons.size)
+    }
+
+    @Test
     fun `a pending entry with no detail round-trips`() {
         val snapshot =
             RelayDirectorySnapshot(

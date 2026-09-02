@@ -64,7 +64,7 @@ class WatchOnlySigner(
 val quartzSignerFactory =
     SignerFactory { pubKey, credential ->
         when (credential) {
-            is Credential.LocalKey -> QuartzLocalSigner(pubKey, credential.secKeyHex)
+            is Credential.LocalKey -> QuartzLocalSigner(pubKey, credential.secKey.hex)
             is Credential.WatchOnly -> WatchOnlySigner(pubKey)
             is Credential.ExternalSigner ->
                 throw IllegalArgumentException(

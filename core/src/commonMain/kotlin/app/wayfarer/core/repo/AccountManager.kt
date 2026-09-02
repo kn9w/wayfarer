@@ -1,6 +1,7 @@
 package app.wayfarer.core.repo
 
 import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.model.SecKey
 import app.wayfarer.core.nostr.Bech32Codec
 import app.wayfarer.core.nostr.EventSigner
 import app.wayfarer.core.nostr.KeyTool
@@ -21,9 +22,17 @@ import kotlin.concurrent.Volatile
  * express.
  */
 sealed interface Credential {
-    /** A key held by this app, encrypted at rest. */
+    /**
+     * A key held by this app, encrypted at rest.
+     *
+     * Typed [SecKey] rather than [String] so the generated [toString] of this
+     * class — and of [Account], which holds one — cannot print the key. A data
+     * class whose field is a bare hex string puts the whole secret into every
+     * log line, crash report and error message that ever interpolates an
+     * account, which is exactly the accident [SecKey] exists to prevent.
+     */
     data class LocalKey(
-        val secKeyHex: String,
+        val secKey: SecKey,
     ) : Credential
 
     /** A NIP-55 Android signer app. This app never sees the key. */
@@ -73,8 +82,9 @@ sealed interface LoginResult {
  * Account creation, login and logout.
  *
  * The secret key never leaves [SecretStore] except to build a signer and to be
- * shown once, on request, in the backup screen. Nothing here logs it and
- * [app.wayfarer.core.model.SecKey.toString] redacts it.
+ * shown once, on request, in the backup screen. Nothing here logs it, and it is
+ * carried as a [SecKey] — whose [SecKey.toString] redacts it — so that it cannot
+ * reach a log line through the generated [toString] of the types holding it.
  */
 class AccountManager(
     private val keyTool: KeyTool,
@@ -96,19 +106,19 @@ class AccountManager(
     /** Restores the previous session. Call once at startup. */
     suspend fun restore(): Account? {
         val storedPubKey = PubKey.parseOrNull(settings.getString(KEY_PUBKEY)) ?: return null
-        val secKeyHex = secrets.readSecKeyHex()
+        val secKey = SecKey.parseOrNull(secrets.readSecKeyHex())
 
         val signerPackage = settings.getString(KEY_SIGNER_PACKAGE)?.takeIf { it.isNotBlank() }
         val credential =
             when {
-                secKeyHex != null -> Credential.LocalKey(secKeyHex)
+                secKey != null -> Credential.LocalKey(secKey)
                 signerPackage != null -> Credential.ExternalSigner(signerPackage)
                 else -> Credential.WatchOnly
             }
 
         // A stored secret that no longer matches the stored pubkey means the two
         // stores disagree; trust the secret, since that is the thing that can sign.
-        val pubKey = secKeyHex?.let(keyTool::pubKeyOf) ?: storedPubKey
+        val pubKey = secKey?.let { keyTool.pubKeyOf(it.hex) } ?: storedPubKey
         return activate(pubKey, credential)
     }
 
@@ -120,7 +130,7 @@ class AccountManager(
      */
     suspend fun createAccount(): Pair<Account, String> {
         val secKeyHex = keyTool.generateSecKeyHex()
-        val account = activate(keyTool.pubKeyOf(secKeyHex), Credential.LocalKey(secKeyHex))
+        val account = activate(keyTool.pubKeyOf(secKeyHex), Credential.LocalKey(SecKey(secKeyHex)))
         return account to bech32.encodeNsec(secKeyHex)
     }
 
@@ -129,7 +139,7 @@ class AccountManager(
         val trimmed = input.trim()
 
         bech32.decodeSecKeyHex(trimmed)?.let { secKeyHex ->
-            return LoginResult.Success(activate(keyTool.pubKeyOf(secKeyHex), Credential.LocalKey(secKeyHex)))
+            return LoginResult.Success(activate(keyTool.pubKeyOf(secKeyHex), Credential.LocalKey(SecKey(secKeyHex))))
         }
         bech32.decodePubKey(trimmed)?.let { pubKey ->
             return LoginResult.Success(activate(pubKey, Credential.WatchOnly))
@@ -162,7 +172,7 @@ class AccountManager(
         credential: Credential,
     ): Account {
         when (credential) {
-            is Credential.LocalKey -> secrets.writeSecKeyHex(credential.secKeyHex)
+            is Credential.LocalKey -> secrets.writeSecKeyHex(credential.secKey.hex)
             else -> secrets.clear()
         }
         settings.putString(KEY_PUBKEY, pubKey.hex)

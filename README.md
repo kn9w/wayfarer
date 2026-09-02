@@ -9,12 +9,20 @@ explicitly approved by the user.
   keys and relays, then offers an account and an equally weighted "not for now". Reading needs no
   key, so browsing without an account is a supported way to use the app rather than a dead end.
 - Create an account, or log in with an `npub` (watch-only), an `nsec`, or an external signer app.
-- **Your key stays reachable** — the `nsec` is encrypted by an `AndroidKeyStore` key, shown once at
-  setup on a screen with no way to leave it by accident, and readable again in Settings behind the
-  device's own lock screen.
+- **Your key stays reachable, and stays off the screen record** — the `nsec` is encrypted by an
+  `AndroidKeyStore` key, shown once at setup on a screen with no way to leave it by accident, and
+  readable again in Settings behind the device's own lock screen. Both screens that can show it set
+  `FLAG_SECURE`, so it is kept out of screenshots, screen recordings and the task switcher's
+  snapshot — a lock screen in front of the key is worth little if backgrounding the app hands the
+  same key to the recents thumbnail — and leaving the app puts it away again.
 - View and publish profiles, short notes, and long-form articles.
 - **Outbox routing (NIP-65)** — notes are read from the relays their authors publish to, and
   published to your write relays plus the read relays of everyone you mention.
+- **A follow list that stays on this phone** — an alternative to the public kind 3, for people you
+  want to read without announcing it. It is never published, so no other client can see it. It is
+  not invisible to *relays*: reading somebody means asking a relay for their posts by pubkey, so the
+  relays you read through still learn who is on it. The Following screen says so where the two kinds
+  of follow are explained.
 - **Deny-by-default relay permissions** — no socket opens to a relay you have not approved. Read
   and write are granted separately, and relays the app wanted are queued with the reason why. The
   permission list is local to the device: changing it publishes nothing.
@@ -106,8 +114,8 @@ names the host first.
 
 | NIP | What | Extent |
 |---|---|---|
-| [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified. |
-| [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. |
+| [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified before it is stored — notes, articles and thread comments, and equally the kinds that steer the app: profiles (0), follow lists (3) and relay lists (10002). |
+| [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. Verified before use. |
 | [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. No thread view. |
 | [11](https://github.com/nostr-protocol/nips/blob/master/11.md) | Relay information | Fetched on explicit request; shows supported NIPs, software, auth/payment requirements, posting policy. |
 | [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode **with its relay hints kept**, `note` encode. Hints are offered for approval, never used on the strength of the link alone. |
@@ -185,7 +193,7 @@ Android plugin and builds on the JDK alone. `google()` is needed as a repository
 
 ## Status
 
-`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 177 unit tests
+`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 190 unit tests
 covering the relay gate, the set-cover router, NIP-11 consent, NIP-23 addressable replacement, the
 NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its separation from the local
 permission list, the onboarding sequence — including that a first launch
@@ -193,15 +201,15 @@ queries nothing, that the key screen is unreachable from the tab bar, and that l
 before touching the app's own relays — and round-trips through real secp256k1 signing and real
 Quartz parsing.
 
-`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 100 tests green — which is
+`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 146 tests green — which is
 possible precisely because it no longer applies the Android plugin. The rest of the Android build
 has not been run: `dl.google.com` was unreachable from the machine this was written on, so no
 androidx artifact or Android SDK could be fetched. The modules were verified by
 compiling against `quartz-jvm` and Compose Multiplatform, which mirror the same APIs, on a plain
-JVM. Seven files touching Android-only APIs are therefore unverified — `MainActivity`,
-`WayfarerApplication`, `AndroidStores`, `Nip55Bridge`, `AppSignerFactory`, `DeviceAuthBridge` and
-`QrScan` (the CameraX viewfinder in particular) — as are the AGP, `compileSdk`, Compose BOM and
-CameraX versions in `gradle/libs.versions.toml`.
+JVM. Eight files touching Android-only APIs are therefore unverified — `MainActivity`,
+`WayfarerApplication`, `AndroidStores`, `Nip55Bridge`, `AppSignerFactory`, `DeviceAuthBridge`,
+`SecureScreen` and `QrScan` (the CameraX viewfinder in particular) — as are the AGP, `compileSdk`,
+Compose BOM and CameraX versions in `gradle/libs.versions.toml`.
 
 ## License
 

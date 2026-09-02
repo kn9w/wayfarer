@@ -857,10 +857,20 @@ class AppController(
         reloadQuietly()
     }
 
-    /** The app went to the background: close the REQ and drop the sockets. */
+    /**
+     * The app went to the background: close the REQ, drop the sockets, and put
+     * the secret key away.
+     *
+     * The key is cleared here for the same reason `SecureScreen` exists: leaving
+     * the app is exactly when the system takes the snapshot the task switcher
+     * shows, and coming back would otherwise re-display the key without asking
+     * again. Navigating away already clears it; leaving is the other way off the
+     * screen and was the one not covered.
+     */
     fun onLeaveForeground() {
         if (!foreground) return
         foreground = false
+        revealedKeyState.value = null
         streamJob?.cancel()
         streamJob = null
         if (!transportStarted) return

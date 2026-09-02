@@ -70,9 +70,16 @@ class RelayListRepository(
     /**
      * Files a kind 10002 into the cache and offers every relay it names to the
      * approval queue. Safe to call with any event; non-10002 is ignored.
+     *
+     * Verified first, for two reasons that compound. This list decides where the
+     * app looks for an author's posts, and — through [offerToDirectory] — which
+     * relay URLs reach the approval queue wearing a reason the user is meant to
+     * trust ("write relay of npub1abc…"). An unverified one would let any relay
+     * put its own address in front of the user under somebody else's name.
      */
     fun absorb(event: NostrEvent): RelayList? {
         if (event.kind != EventKind.RELAY_LIST) return null
+        if (!codec.verify(event)) return null
         val entries = codec.readRelayList(event)
         val list = RelayList(event.pubKey, event.createdAt, entries)
         if (!cache.put(list)) return cache[event.pubKey]

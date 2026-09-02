@@ -64,12 +64,24 @@ class ContactRepository(
         return state.value
     }
 
+    /**
+     * Files a kind 3 as the account's follow list.
+     *
+     * The signature check is not optional here, and it is the reason this method
+     * cannot trust [event.pubKey]: a relay can put any pubkey it likes in that
+     * field. An unverified list would be bad enough on its own — the feed asks
+     * for whoever it names — but [publish] rebuilds the next list *over*
+     * [latestEvent] to preserve petnames and unknown tags, so absorbing a forged
+     * one means the next follow signs somebody else's tags and content with the
+     * user's key.
+     */
     fun absorb(
         event: NostrEvent,
         author: PubKey,
     ) {
         if (event.kind != EventKind.CONTACT_LIST || event.pubKey != author) return
         if (event.createdAt <= latestCreatedAt) return
+        if (!codec.verify(event)) return
         latestCreatedAt = event.createdAt
         latestEvent = event
         state.value = codec.readFollows(event)
