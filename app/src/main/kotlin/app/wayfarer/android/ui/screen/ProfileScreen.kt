@@ -297,8 +297,15 @@ private fun AdvertisedRelaysCard(
                         "this phone is allowed to connect to.",
                     style = MaterialTheme.typography.labelSmall,
                 )
-                Button(onClick = onManage) {
-                    Text(if (entries.isEmpty()) "Set up my relay list" else "Manage my relay list")
+                // Red — they advertise relays and none of them are allowed here —
+                // is the one state where this button is the wrong next step: the
+                // fix is approving a relay, which a row above does in one tap.
+                // With no list at all there is no bubble and no other way in, so
+                // the button stays.
+                if (entries.isEmpty() || allowedCount > 0) {
+                    Button(onClick = onManage) {
+                        Text(if (entries.isEmpty()) "Set up my relay list" else "Manage my relay list")
+                    }
                 }
             }
         }

@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -44,7 +42,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -223,7 +220,10 @@ fun WayfarerApp(
                 // the content and sat exactly on the "next" arrow — hiding it and
                 // taking its taps, so advancing opened the compose sheet instead.
                 if (screen is Screen.Home) PagingBar(controller)
-                NavigationBar {
+                // 64dp rather than Material's 80dp: the two tabs still clear the
+                // 48dp touch target with their labels, and the bar was spending
+                // the difference on nothing.
+                NavigationBar(modifier = Modifier.height(64.dp)) {
                     NavigationBarItem(
                         // Composing and reading are reached from here, so the tab
                         // stays lit while the user is in one of them.
@@ -365,8 +365,10 @@ private fun AppHeader(
 
             Spacer(Modifier.weight(1f))
 
+            // No count on the icon: the line to its left already says how many
+            // are waiting, and the badge was the same number twice.
             IconButton(onClick = onRelays, modifier = Modifier.size(36.dp)) {
-                PendingBadge(waiting, WayfarerIcons.Relay)
+                Icon(WayfarerIcons.Relay, contentDescription = "Relays")
             }
         }
     }
@@ -384,21 +386,6 @@ private fun ConnectionDot(live: Boolean) {
                 CircleShape,
             ),
     )
-}
-
-/** The relay icon, carrying the number of relays waiting on a decision. */
-@Composable
-private fun PendingBadge(
-    pending: Int,
-    icon: ImageVector,
-) {
-    if (pending == 0) {
-        Icon(icon, contentDescription = null)
-        return
-    }
-    BadgedBox(badge = { Badge { Text(if (pending > 99) "99+" else pending.toString()) } }) {
-        Icon(icon, contentDescription = null)
-    }
 }
 
 @Composable

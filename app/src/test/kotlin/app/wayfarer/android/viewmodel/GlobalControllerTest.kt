@@ -234,6 +234,67 @@ class GlobalControllerTest {
         }
 
     @Test
+    fun `a long press jumps to either end of the rotation`() =
+        runTest {
+            val core = wayfarer()
+            core.follows(alice, bob, carol)
+            core.note(alice, "newest", clock.now - 1 * day)
+            core.note(bob, "middle", clock.now - 2 * day)
+            core.note(carol, "oldest", clock.now - 3 * day)
+            val global = GlobalController(core, TestScope(testScheduler))
+            runCurrent()
+
+            assertEquals(alice, global.state.value.person)
+
+            global.last()
+            runCurrent()
+            assertEquals(carol, global.state.value.person, "one press should reach the far end")
+            assertFalse(global.state.value.hasNext)
+
+            global.first()
+            runCurrent()
+            assertEquals(alice, global.state.value.person)
+            assertFalse(global.state.value.hasPrevious)
+        }
+
+    @Test
+    fun `a long press jumps to either end of a relay's posts`() =
+        runTest {
+            val core = wayfarer()
+            val here = relay("here.example")
+            core.relayDirectory.approve(here, read = true, write = false)
+            core.note(alice, "newest", clock.now, from = here)
+            core.note(bob, "middle", clock.now - 1 * day, from = here)
+            core.note(carol, "oldest", clock.now - 2 * day, from = here)
+
+            val global = GlobalController(core, TestScope(testScheduler))
+            global.setMode(BrowseMode.Relay)
+            runCurrent()
+
+            global.last()
+            runCurrent()
+            assertEquals("oldest", (global.state.value.currentPost as FeedItem.Post).note.content)
+
+            global.first()
+            runCurrent()
+            assertEquals("newest", (global.state.value.currentPost as FeedItem.Post).note.content)
+        }
+
+    @Test
+    fun `jumping with nothing to read does not move or crash`() =
+        runTest {
+            val core = wayfarer()
+            val global = GlobalController(core, TestScope(testScheduler))
+            runCurrent()
+
+            global.last()
+            global.first()
+            runCurrent()
+
+            assertNull(global.state.value.person)
+        }
+
+    @Test
     fun `a note arriving does not move the person on screen`() =
         runTest {
             val core = wayfarer()

@@ -1062,9 +1062,21 @@ class AppController(
      * something worth a round trip.
      */
     fun replyContextFor(parent: EventId): String {
-        val author = core.feed.allNotes.value[parent]?.author ?: return "reply"
+        val author = authorOf(parent) ?: return "reply"
         return "reply to ${displayName(author)}"
     }
+
+    /**
+     * Who wrote an event, if it has been seen.
+     *
+     * Replies are stored apart from the feed — that separation is what stopped
+     * them rendering as top-level posts — so a thread root can be in either
+     * store depending on whether it arrived as a post or as somebody's reply.
+     */
+    fun authorOf(id: EventId): PubKey? =
+        core.feed.allNotes.value[id]?.author
+            ?: core.threads.allReplies.value[id]?.author
+            ?: core.threads.allComments.value[id]?.author
 
     fun displayName(pubKey: PubKey): String =
         core.profiles[pubKey]?.displayNameOrNull() ?: shortenNpub(npubFor(pubKey))

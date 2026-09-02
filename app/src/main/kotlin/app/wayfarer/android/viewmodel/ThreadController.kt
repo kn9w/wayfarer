@@ -41,11 +41,27 @@ class ThreadController(
 ) {
     private val expandedState = MutableStateFlow<Set<ThreadRef>>(emptySet())
     private val threadsState = MutableStateFlow<Map<ThreadRef, ThreadState>>(emptyMap())
+    private val collapsedState = MutableStateFlow<Set<EventId>>(emptySet())
 
     /** The roots whose threads are open on screen. */
     val expanded: StateFlow<Set<ThreadRef>> = expandedState.asStateFlow()
 
     val threads: StateFlow<Map<ThreadRef, ThreadState>> = threadsState.asStateFlow()
+
+    /**
+     * Replies whose own sub-replies are folded away.
+     *
+     * Held by event id rather than per root, because an entry belongs to exactly
+     * one conversation — and held here rather than in the Composable so that
+     * scrolling a long thread out of composition does not silently unfold it.
+     */
+    val collapsed: StateFlow<Set<EventId>> = collapsedState.asStateFlow()
+
+    /** Folds or unfolds everything written under one reply. */
+    fun toggleCollapsed(id: EventId) {
+        val current = collapsedState.value
+        collapsedState.value = if (id in current) current - id else current + id
+    }
 
     fun stateOf(root: ThreadRef): ThreadState = threadsState.value[root] ?: ThreadState()
 

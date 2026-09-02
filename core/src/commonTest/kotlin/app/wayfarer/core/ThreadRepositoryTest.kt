@@ -88,6 +88,28 @@ class ThreadRepositoryTest {
     }
 
     @Test
+    fun `an entry carries what it answers, under both conventions`() {
+        // Without this the screen cannot tell a reply to the post from a reply
+        // to a reply: the parent is parsed on the way in and used to be dropped
+        // before anything could read it.
+        val threads = repo(FakeTransport())
+        val firstReply = EventId("aa".repeat(32))
+
+        // NIP-22: uppercase E is the root, lowercase e what is being answered.
+        threads.absorb(comment("bb", bob, rootNote, firstReply, createdAt = 200, text = "answering a reply"), null)
+        // NIP-22 top level: the two coincide.
+        threads.absorb(comment("cc", bob, rootNote, rootNote, createdAt = 300, text = "answering the post"), null)
+        // NIP-10: the e-tag is the target.
+        threads.absorb(nip10Reply("aa", alice, rootNote, createdAt = 100, text = "legacy"), relay("a.example"))
+
+        val byContent = threads.threadUnder(ThreadRef.Event(rootNote)).associateBy { it.content }
+
+        assertEquals(firstReply, byContent.getValue("answering a reply").parent)
+        assertEquals(rootNote, byContent.getValue("answering the post").parent)
+        assertEquals(rootNote, byContent.getValue("legacy").parent)
+    }
+
+    @Test
     fun `a kind 1 that is not a reply is not part of anyone's thread`() {
         val threads = repo(FakeTransport())
         val standalone =

@@ -62,14 +62,41 @@ class ThreadRepository(
         val fromComments =
             comments.value.values
                 .filter { it.root == root }
-                .map { ThreadEntry(it.id, it.author, it.createdAt, it.content, it.seenOn, isComment = true) }
+                .map {
+                    ThreadEntry(
+                        it.id,
+                        it.author,
+                        it.createdAt,
+                        it.content,
+                        it.seenOn,
+                        isComment = true,
+                        // NIP-22 keeps the root in uppercase tags and what is
+                        // actually being answered in lowercase ones. Only an
+                        // event parent can be placed in a thread: an address or
+                        // an external reference is the root's own identity, not
+                        // another entry in this list.
+                        parent = (it.parent as? ThreadRef.Event)?.id,
+                    )
+                }
         val fromReplies =
             replies.value.values
                 // threadRoot as well as replyTo: a reply to a reply names its
                 // parent in replyTo, so matching on that alone fetched nested
                 // replies and then dropped them before the screen.
                 .filter { root is ThreadRef.Event && (it.threadRoot == root.id || it.replyTo == root.id) }
-                .map { ThreadEntry(it.id, it.author, it.createdAt, it.content, it.seenOn, isComment = false) }
+                .map {
+                    ThreadEntry(
+                        it.id,
+                        it.author,
+                        it.createdAt,
+                        it.content,
+                        it.seenOn,
+                        isComment = false,
+                        // NIP-10: replyTo is the immediate parent, threadRoot the
+                        // conversation. The pair is what the shape is built from.
+                        parent = it.replyTo,
+                    )
+                }
         return (fromComments + fromReplies).sortedBy { it.createdAt }
     }
 
@@ -235,9 +262,15 @@ class ThreadRepository(
 /**
  * One thing said under a root.
  *
- * Flattened on purpose: a NIP-22 comment and a NIP-10 reply differ in how they
- * point at what they answer, and not at all in what a reader sees. [isComment]
- * is kept only so the UI can say which convention a reply arrived by.
+ * A NIP-22 comment and a NIP-10 reply differ in how they point at what they
+ * answer, and not at all in what a reader sees, so both arrive here. [isComment]
+ * is kept only so the UI can say which convention a reply came by.
+ *
+ * [parent] is what makes a conversation a shape rather than a list. This class
+ * used to be flat on purpose, which meant a reply to a reply was indistinguishable
+ * from a reply to the post — the information was parsed one layer down, in
+ * [Comment.parent] and [Note.replyTo], and then dropped on the way to the screen.
+ * Null means this answers the root itself.
  */
 data class ThreadEntry(
     val id: EventId,
@@ -246,4 +279,103 @@ data class ThreadEntry(
     val content: String,
     val seenOn: Set<RelayUrl>,
     val isComment: Boolean,
+    val parent: EventId? = null,
 )
+
+/** One entry, placed: how deep it sits and how much hangs below it. */
+data class ThreadNode(
+    val entry: ThreadEntry,
+    val depth: Int,
+    /** Everything below this entry, at any depth — what collapsing it would hide. */
+    val descendants: Int,
+)
+
+/**
+ * Arranges a conversation into the shape it was written in.
+ *
+ * Depth-first and oldest-first, so a reply sits under what it answers and reads
+ * in the order it happened — the same order [ThreadRepository.threadUnder]
+ * already returns, applied per level.
+ *
+ * An entry whose parent is not in [entries] is treated as a reply to the root
+ * rather than dropped. A thread is fetched by its root, and a relay is free to
+ * return a reply while withholding its parent, so orphans are normal; hiding
+ * them would silently lose the visible half of a conversation.
+ *
+ * [collapsed] ids keep their own row and lose their subtree, which is what
+ * [ThreadNode.descendants] is there to report.
+ */
+fun threadTree(
+    entries: List<ThreadEntry>,
+    root: EventId?,
+    collapsed: Set<EventId> = emptySet(),
+): List<ThreadNode> {
+    if (entries.isEmpty()) return emptyList()
+
+    val ordered = entries.sortedBy { it.createdAt }
+    val present = ordered.mapTo(mutableSetOf()) { it.id }
+    val children = mutableMapOf<EventId?, MutableList<ThreadEntry>>()
+
+    for (entry in ordered) {
+        // Null parent, the root itself, or a parent that never arrived: all of
+        // them answer the root as far as a reader can tell.
+        val under = entry.parent?.takeIf { it != root && it in present }
+        children.getOrPut(under) { mutableListOf() } += entry
+    }
+
+    // Two replies naming each other is a shape no relay is obliged to rule out,
+    // and it belongs to no root, so both the count and the walk carry their own
+    // visited set rather than trusting the links to terminate.
+    fun descendantsOf(
+        id: EventId,
+        counted: MutableSet<EventId>,
+    ): Int {
+        var total = 0
+        for (child in children[id].orEmpty()) {
+            if (!counted.add(child.id)) continue
+            total += 1 + descendantsOf(child.id, counted)
+        }
+        return total
+    }
+
+    // Which entries hang off the root at all, ignoring what is folded. Folding
+    // must hide a subtree, not push it back to the top: without this pass the
+    // sweep below cannot tell "deliberately hidden" from "unreachable", and
+    // collapsing a reply re-displayed its children as though they were roots.
+    val reachable = mutableSetOf<EventId>()
+
+    fun mark(parent: EventId?) {
+        for (entry in children[parent].orEmpty()) {
+            if (reachable.add(entry.id)) mark(entry.id)
+        }
+    }
+
+    mark(null)
+
+    val placed = mutableSetOf<EventId>()
+    val out = mutableListOf<ThreadNode>()
+
+    fun walk(
+        parent: EventId?,
+        depth: Int,
+    ) {
+        for (entry in children[parent].orEmpty()) {
+            if (!placed.add(entry.id)) continue
+            out += ThreadNode(entry, depth, descendantsOf(entry.id, mutableSetOf(entry.id)))
+            if (entry.id !in collapsed) walk(entry.id, depth + 1)
+        }
+    }
+
+    walk(null, 0)
+
+    // What is left names a parent that names it back, directly or at a distance,
+    // so no ancestor of it reaches the root. Still something a person wrote:
+    // shown from the oldest of them rather than dropped.
+    for (entry in ordered) {
+        if (entry.id in reachable || !placed.add(entry.id)) continue
+        out += ThreadNode(entry, 0, descendantsOf(entry.id, mutableSetOf(entry.id)))
+        if (entry.id !in collapsed) walk(entry.id, 1)
+    }
+
+    return out
+}

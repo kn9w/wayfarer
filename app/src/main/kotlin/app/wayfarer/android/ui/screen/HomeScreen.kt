@@ -1,6 +1,8 @@
 package app.wayfarer.android.ui.screen
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -27,6 +30,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -39,7 +43,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -57,7 +63,8 @@ import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfNote
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.ThreadRef
-import app.wayfarer.core.repo.ThreadEntry
+import app.wayfarer.core.repo.ThreadNode
+import app.wayfarer.core.repo.threadTree
 import app.wayfarer.core.model.Note
 
 /** Horizontal inset shared by every post, so names and bodies line up down the feed. */
@@ -208,8 +215,17 @@ private fun Subject(
             else -> "Nobody to read"
         }
 
+    // Relay mode picks a place; Follows mode names a person, and the name is the
+    // obvious way to go and read who you are reading.
+    val onTap: (() -> Unit)? =
+        when {
+            relayMode && global.relays.isNotEmpty() -> onPick
+            !relayMode && person != null -> ({ controller.openProfile(person) })
+            else -> null
+        }
+
     Row(
-        modifier = if (relayMode && global.relays.isNotEmpty()) modifier.clickable(onClick = onPick) else modifier,
+        modifier = if (onTap != null) modifier.clickable(onClick = onTap) else modifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -404,12 +420,13 @@ fun PagingBar(controller: AppController) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { controller.global.previous() }, enabled = global.hasPrevious) {
-            Icon(
-                WayfarerIcons.ChevronLeft,
-                contentDescription = if (global.mode == BrowseMode.Follows) "Previous person" else "Previous post",
-            )
-        }
+        PagingArrow(
+            icon = WayfarerIcons.ChevronLeft,
+            description = if (global.mode == BrowseMode.Follows) "Previous person" else "Previous post",
+            enabled = global.hasPrevious,
+            onStep = { controller.global.previous() },
+            onJump = { controller.global.first() },
+        )
         Text(
             // The position moved down here from the subject row: this bar is
             // what steps through the set, so it is where "where am I" belongs.
@@ -422,12 +439,54 @@ fun PagingBar(controller: AppController) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        IconButton(onClick = { controller.global.next() }, enabled = global.hasNext) {
-            Icon(
-                WayfarerIcons.ChevronRight,
-                contentDescription = if (global.mode == BrowseMode.Follows) "Next person" else "Next post",
-            )
-        }
+        PagingArrow(
+            icon = WayfarerIcons.ChevronRight,
+            description = if (global.mode == BrowseMode.Follows) "Next person" else "Next post",
+            enabled = global.hasNext,
+            onStep = { controller.global.next() },
+            onJump = { controller.global.last() },
+        )
+    }
+}
+
+/**
+ * One arrow: a tap steps, a long press goes all the way.
+ *
+ * Two hundred follows is otherwise two hundred taps from the far end, and the
+ * rotation has no other way to get there.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PagingArrow(
+    icon: ImageVector,
+    description: String,
+    enabled: Boolean,
+    onStep: () -> Unit,
+    onJump: () -> Unit,
+) {
+    Box(
+        modifier =
+            Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .combinedClickable(
+                    enabled = enabled,
+                    onClick = onStep,
+                    onLongClick = onJump,
+                    onLongClickLabel = "Jump to the end",
+                ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            tint =
+                if (enabled) {
+                    LocalContentColor.current
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                },
+        )
     }
 }
 
@@ -529,16 +588,23 @@ internal fun ThreadSection(
     rootKind: String,
     rootAuthor: PubKey,
     controller: AppController,
+    /**
+     * Replaces the count wording when this section is a way into somebody else's
+     * conversation rather than the replies to the post it sits under.
+     */
+    closedLabel: String? = null,
 ) {
     val threads by controller.threads.threads.collectAsStateWithLifecycle()
     val expandedRoots by controller.threads.expanded.collectAsStateWithLifecycle()
+    val collapsed by controller.threads.collapsed.collectAsStateWithLifecycle()
     val state = threads[root] ?: ThreadState()
     val expanded = root in expandedRoots
     var draft by remember(root) { mutableStateOf("") }
 
-    // Nothing to offer once we have looked and found an empty conversation.
-    if (state.loaded && state.entries.isEmpty() && !expanded) return
-
+    // This used to return early on a loaded-and-empty thread, which took the
+    // reply composer with it: open a note with no replies, close it again, and
+    // there was no longer any way to reply to that note at all. An empty
+    // conversation still needs one line, because that line is how you start one.
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -552,8 +618,10 @@ internal fun ThreadSection(
         )
         Text(
             when {
-                state.loading -> "Loading replies…"
+                state.loading -> "Loading…"
+                closedLabel != null -> closedLabel
                 !state.loaded -> "Replies"
+                state.entries.isEmpty() -> "Reply"
                 state.entries.size == 1 -> "1 reply"
                 else -> "${state.entries.size} replies"
             },
@@ -563,6 +631,8 @@ internal fun ThreadSection(
     }
 
     if (!expanded) return
+
+    val nodes = threadTree(state.entries, (root as? ThreadRef.Event)?.id, collapsed)
 
     Column(
         modifier =
@@ -579,8 +649,8 @@ internal fun ThreadSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        for (entry in state.entries) {
-            ThreadEntryRow(entry, controller)
+        for (node in nodes) {
+            ThreadEntryRow(node, collapsed = node.entry.id in collapsed, controller = controller)
         }
     }
 
@@ -606,17 +676,39 @@ internal fun ThreadSection(
     )
 }
 
+/**
+ * One reply, at the depth it was written at.
+ *
+ * Indentation is uncapped: a conversation's shape is the point, and truncating
+ * it at some arbitrary level puts two different structures on screen looking
+ * identical. Long-pressing a reply that has any of its own folds them away,
+ * which is what keeps a deep thread readable instead of a depth limit.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ThreadEntryRow(
-    entry: ThreadEntry,
+    node: ThreadNode,
+    collapsed: Boolean,
     controller: AppController,
 ) {
+    val entry = node.entry
+    val foldable = node.descendants > 0
+
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp)
-                .padding(vertical = 2.dp),
+                .padding(start = (12 + node.depth * 12).dp)
+                .then(
+                    if (foldable) {
+                        Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { controller.threads.toggleCollapsed(entry.id) },
+                        )
+                    } else {
+                        Modifier
+                    },
+                ).padding(vertical = 2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         PostByline(
@@ -626,6 +718,18 @@ private fun ThreadEntryRow(
             onOpenAuthor = { controller.openProfile(entry.author) },
         )
         Text(entry.content, style = MaterialTheme.typography.bodySmall)
+
+        if (foldable) {
+            Text(
+                if (collapsed) {
+                    if (node.descendants == 1) "1 reply hidden — hold to show" else "${node.descendants} replies hidden — hold to show"
+                } else {
+                    "hold to fold"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -675,22 +779,21 @@ fun NoteRow(
         )
 
         // A reply used to render as though it were a post of its own, because
-        // Note.replyTo was parsed and then never read by anything. Saying so is
-        // the difference between a fragment and a fragment you can place.
+        // Note.replyTo was parsed and then never read by anything. Saying what it
+        // answers is half of placing it; the other half is being able to go and
+        // read the rest, so this line opens the conversation it belongs to.
+        //
+        // Rooted at threadRoot, not at the parent: the reader wants the whole
+        // exchange, and under NIP-10 the root is what the other replies name.
         note.replyTo?.let { parent ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(
-                    WayfarerIcons.Reply,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    controller.replyContextFor(parent),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            val conversation = note.threadRoot ?: parent
+            ThreadSection(
+                root = rootRefOfNote(conversation),
+                rootKind = "1",
+                rootAuthor = controller.authorOf(conversation) ?: note.author,
+                controller = controller,
+                closedLabel = controller.replyContextFor(parent) + " · see the conversation",
+            )
         }
 
         Text(note.content, style = MaterialTheme.typography.bodyMedium)

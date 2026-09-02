@@ -543,6 +543,14 @@ private fun RelayDetailSheet(
                 }
             }
 
+            // Above the reasons, not below them. The reason list is unbounded —
+            // one line per person whose relay list named this relay — so on a
+            // relay many follows advertise, asking it to describe itself was
+            // several screens down, which is the same thing that put the
+            // allow and block buttons out of reach before they were moved up.
+            HorizontalDivider()
+            RelayInfoPanel(info, onFetchInfo)
+
             if (row.reasons.isNotEmpty()) {
                 HorizontalDivider()
                 Text("Why Wayfarer wants it", style = MaterialTheme.typography.titleSmall)
@@ -550,9 +558,6 @@ private fun RelayDetailSheet(
                     Text("· ${reason.describe()}", style = MaterialTheme.typography.bodySmall)
                 }
             }
-
-            HorizontalDivider()
-            RelayInfoPanel(info, onFetchInfo)
         }
     }
 }

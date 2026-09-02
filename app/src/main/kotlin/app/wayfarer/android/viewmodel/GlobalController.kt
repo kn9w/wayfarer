@@ -314,6 +314,33 @@ class GlobalController(
 
     fun previous() = step(-1)
 
+    /**
+     * The ends of the set, for a long press on an arrow.
+     *
+     * Same two cursors as [step], moved all the way rather than by one: a
+     * rotation of two hundred follows is otherwise two hundred taps from the
+     * other end.
+     */
+    fun first() = jump { 0 }
+
+    fun last() = jump { it.lastIndex }
+
+    private fun jump(indexOf: (List<Any>) -> Int) {
+        val current = state.value
+        when (current.mode) {
+            BrowseMode.Follows -> {
+                val next = current.rotation.getOrNull(indexOf(current.rotation)) ?: return
+                if (next == current.person) return
+                personState.value = next
+                onSubjectChanged()
+            }
+            BrowseMode.Relay -> {
+                val next = current.relayPosts.getOrNull(indexOf(current.relayPosts)) ?: return
+                postKeyState.value = next.key
+            }
+        }
+    }
+
     private fun step(delta: Int) {
         val current = state.value
         when (current.mode) {

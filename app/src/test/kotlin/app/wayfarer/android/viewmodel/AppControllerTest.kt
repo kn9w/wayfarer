@@ -10,6 +10,7 @@ import app.wayfarer.core.FakeTransport
 import app.wayfarer.core.NostrBackend
 import app.wayfarer.core.UnusedRelayInfoFetcher
 import app.wayfarer.core.Wayfarer
+import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
@@ -1060,5 +1061,47 @@ class AppControllerTest {
             runCurrent()
 
             assertEquals(core.relayDirectory.pending.keys.first(), controller.relayInfoPrompt.value)
+        }
+
+    // ---- conversations ----------------------------------------------------
+
+    @Test
+    fun `folding a reply is remembered and folding it again undoes it`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+
+            val reply = EventId("ab".repeat(32))
+            assertTrue(controller.threads.collapsed.value.isEmpty())
+
+            controller.threads.toggleCollapsed(reply)
+            assertTrue(reply in controller.threads.collapsed.value)
+
+            controller.threads.toggleCollapsed(reply)
+            assertFalse(reply in controller.threads.collapsed.value)
+        }
+
+    @Test
+    fun `folds accumulate rather than replacing each other`() =
+        runTest {
+            // Two folded replies must both stay folded: reading a long thread
+            // means folding several branches, and having each one spring the
+            // last back open would make that impossible.
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+
+            val first = EventId("ab".repeat(32))
+            val second = EventId("cd".repeat(32))
+            val untouched = EventId("ef".repeat(32))
+
+            controller.threads.toggleCollapsed(first)
+            controller.threads.toggleCollapsed(second)
+
+            assertEquals(setOf(first, second), controller.threads.collapsed.value)
+            assertFalse(untouched in controller.threads.collapsed.value)
+
+            // Unfolding one leaves the other alone.
+            controller.threads.toggleCollapsed(first)
+            assertEquals(setOf(second), controller.threads.collapsed.value)
         }
 }
