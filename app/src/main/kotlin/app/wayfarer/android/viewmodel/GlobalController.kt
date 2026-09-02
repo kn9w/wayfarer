@@ -136,7 +136,8 @@ class GlobalController(
             // time: allowing or blocking a relay changes the picker, and a plain
             // read would leave the screen showing a relay the user just revoked.
             combine(
-                core.contacts.follows,
+                // Both lists: a locally-followed author is somebody to read too.
+                core.follows.combined,
                 core.feed.allNotes,
                 core.articles.all,
                 core.relayDirectory.snapshot,
@@ -362,7 +363,7 @@ class GlobalController(
         get() {
             val rotation =
                 rotationFrom(
-                    core.contacts.follows.value,
+                    core.follows.now,
                     core.feed.allNotes.value.values,
                     core.articles.all.value.values,
                     activityState.value,
@@ -381,7 +382,7 @@ class GlobalController(
         }
 
     val currentMode: BrowseMode
-        get() = chosenMode.value ?: defaultModeFor(core.contacts.follows.value)
+        get() = chosenMode.value ?: defaultModeFor(core.follows.now)
 }
 
 /** Relay mode for somebody with nobody to read; Follows once they have someone. */

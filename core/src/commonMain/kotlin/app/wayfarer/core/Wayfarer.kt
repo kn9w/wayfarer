@@ -18,6 +18,8 @@ import app.wayfarer.core.repo.ArticleRepository
 import app.wayfarer.core.repo.ContactRepository
 import app.wayfarer.core.repo.EventStore
 import app.wayfarer.core.repo.FeedRepository
+import app.wayfarer.core.repo.FollowBook
+import app.wayfarer.core.repo.LocalFollowStore
 import app.wayfarer.core.repo.OnboardingStore
 import app.wayfarer.core.repo.PreferencesStore
 import app.wayfarer.core.repo.ProfileRepository
@@ -86,6 +88,10 @@ class Wayfarer private constructor(
     val relayHints: RelayHintQueue,
     /** The events behind the projections, for showing one raw or sending it again. */
     val events: EventStore,
+    /** People followed on this phone only, never published. */
+    val localFollows: LocalFollowStore,
+    /** Both follow lists as the one question the feed actually asks. */
+    val follows: FollowBook,
     /**
      * The wall clock the repositories were built with.
      *
@@ -158,6 +164,8 @@ class Wayfarer private constructor(
                 )
 
             val eventStore = EventStore()
+            val contactRepo = ContactRepository(transport, backend.codec, router, relayListRepo, backend.clock)
+            val localFollowStore = LocalFollowStore(settings)
             val articleRepo = ArticleRepository(transport, backend.codec, router, relayListRepo, backend.clock, eventStore)
             val hintQueue = RelayHintQueue()
 
@@ -183,7 +191,7 @@ class Wayfarer private constructor(
                 articles = articleRepo,
                 threads = ThreadRepository(transport, backend.codec, router, backend.clock, hintQueue, describe, eventStore),
                 relayInfo = RelayInfoService(backend.relayInfoFetcher),
-                contacts = ContactRepository(transport, backend.codec, router, relayListRepo),
+                contacts = contactRepo,
                 relayListRepo = relayListRepo,
                 normalizer = backend.normalizer,
                 bech32 = backend.bech32,
@@ -192,6 +200,8 @@ class Wayfarer private constructor(
                 preferences = PreferencesStore(settings).also { it.load() },
                 relayHints = hintQueue,
                 events = eventStore,
+                localFollows = localFollowStore,
+                follows = FollowBook(contactRepo, localFollowStore),
                 clock = backend.clock,
                 suggestedRelays = suggested,
             )

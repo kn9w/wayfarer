@@ -234,6 +234,39 @@ class GlobalControllerTest {
         }
 
     @Test
+    fun `a locally followed author is in the rotation too`() =
+        runTest {
+            // A follow kept on this phone is published nowhere, but it still
+            // answers "whose posts do I want" — the only question the rotation
+            // is asking.
+            val core = wayfarer()
+            core.follows(alice)
+            core.localFollows.load(me)
+            core.localFollows.add(bob)
+            core.note(alice, "from a public follow", clock.now - 1 * day)
+            core.note(bob, "from a local follow", clock.now - 2 * day)
+
+            val global = GlobalController(core, TestScope(testScheduler))
+            runCurrent()
+
+            assertEquals(listOf(alice, bob), global.state.value.rotation)
+        }
+
+    @Test
+    fun `somebody whose only follows are local still starts in Follows mode`() =
+        runTest {
+            val core = wayfarer()
+            core.localFollows.load(me)
+            core.localFollows.add(alice)
+            core.note(alice, "hello", clock.now - 1 * day)
+
+            val global = GlobalController(core, TestScope(testScheduler))
+            runCurrent()
+
+            assertEquals(BrowseMode.Follows, global.state.value.mode)
+        }
+
+    @Test
     fun `a long press jumps to either end of the rotation`() =
         runTest {
             val core = wayfarer()

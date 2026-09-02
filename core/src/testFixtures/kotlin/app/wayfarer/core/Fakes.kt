@@ -263,12 +263,17 @@ fun articleEvent(
 class FakeKeyValueStore : app.wayfarer.core.store.KeyValueStore {
     val values = mutableMapOf<String, String>()
 
+    /** How many times anything has been written, so a no-op write is visible. */
+    var writes = 0
+        private set
+
     override suspend fun getString(key: String): String? = values[key]
 
     override suspend fun putString(
         key: String,
         value: String,
     ) {
+        writes++
         values[key] = value
     }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -52,6 +53,7 @@ import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.android.ui.screen.ComposeNoteScreen
 import app.wayfarer.android.ui.screen.EditArticleScreen
 import app.wayfarer.android.ui.screen.EditProfileScreen
+import app.wayfarer.android.ui.screen.FollowsScreen
 import app.wayfarer.android.ui.screen.HomeScreen
 import app.wayfarer.android.ui.screen.OnboardingSurface
 import app.wayfarer.android.ui.screen.PagingBar
@@ -226,7 +228,9 @@ fun WayfarerApp(
                         screen is Screen.Home || screen is Screen.Compose ||
                             screen is Screen.EditArticle || screen is Screen.ReadArticle ||
                             screen is Screen.ReadNote,
-                    localSelected = screen is Screen.Profile || screen is Screen.EditProfile || screen is Screen.RelayList,
+                    localSelected =
+                        screen is Screen.Profile || screen is Screen.EditProfile ||
+                            screen is Screen.RelayList || screen is Screen.Follows,
                     onGlobal = { controller.goToRoot(Screen.Home) },
                     // Without an account there is no profile to open, so the tab goes
                     // where a signed-out user's options actually are.
@@ -251,6 +255,7 @@ fun WayfarerApp(
                 Screen.EditProfile -> EditProfileScreen(controller)
                 Screen.Settings -> SettingsScreen(controller)
                 Screen.RelayList -> RelayListScreen(controller)
+                Screen.Follows -> FollowsScreen(controller)
                 is Screen.EditArticle -> EditArticleScreen(controller, current.address)
                 is Screen.ReadArticle -> ReadArticleScreen(controller, current.address)
                 is Screen.ReadNote -> ReadNoteScreen(controller, current.id)

@@ -216,13 +216,21 @@ class RelayListController(
         map { RelayListRow(it.url, it.read, it.write, core.relayDirectory.isApproved(it.url)) }
             .sortedBy { it.url.display() }
 
-    private fun PublishError.describe(): String =
-        when (this) {
-            PublishError.NotSignedIn -> "you are not signed in"
-            PublishError.WatchOnlyAccount -> "this account holds no key here"
-            PublishError.NoApprovedWriteRelay ->
-                "no relay is allowed to send your posts, so there is nowhere to publish it. " +
-                    "Allow one for posting in Relays first."
-            is PublishError.Rejected -> "every relay refused it"
-        }
 }
+
+/**
+ * Why a publish failed, in the reader's own terms.
+ *
+ * File scope rather than private to one controller: the follow list publishes
+ * through the same path and fails in the same four ways, and two copies of this
+ * wording would drift.
+ */
+internal fun PublishError.describe(): String =
+    when (this) {
+        PublishError.NotSignedIn -> "you are not signed in"
+        PublishError.WatchOnlyAccount -> "this account holds no key here"
+        PublishError.NoApprovedWriteRelay ->
+            "no relay is allowed to send your posts, so there is nowhere to publish it. " +
+                "Allow one for posting in Relays first."
+        is PublishError.Rejected -> "every relay refused it"
+    }

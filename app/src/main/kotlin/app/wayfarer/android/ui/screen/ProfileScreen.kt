@@ -87,6 +87,9 @@ fun ProfileScreen(
                             // tap from the profile.
                             OutlinedButton(onClick = { controller.go(Screen.Settings) }) { Text("Settings") }
                         }
+                        OutlinedButton(onClick = { controller.go(Screen.Follows) }) { Text("Manage who I follow") }
+                    } else {
+                        FollowControls(pubKey, controller)
                     }
                 }
             }
@@ -224,6 +227,59 @@ private fun RelayListPrompt(onPublish: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onPublish) { Text("Set up where others find me") }
+        }
+    }
+}
+
+/**
+ * The two ways to follow somebody, said plainly.
+ *
+ * Not one button with a hidden default: the difference between them is whether
+ * a signed note naming this person is broadcast to relays, which is not
+ * something to decide on the reader's behalf.
+ */
+@Composable
+private fun FollowControls(
+    pubKey: PubKey,
+    controller: AppController,
+) {
+    val published by controller.publishedFollows.collectAsStateWithLifecycle()
+    val local by controller.localFollows.collectAsStateWithLifecycle()
+    val isPublic = pubKey in published
+    val isLocal = pubKey in local
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (isPublic) {
+                OutlinedButton(onClick = { controller.unfollowPublicly(pubKey) }) { Text("Unfollow publicly") }
+            } else {
+                Button(onClick = { controller.followPublicly(pubKey) }) { Text("Follow publicly") }
+            }
+            if (isLocal) {
+                OutlinedButton(onClick = { controller.unfollowLocally(pubKey) }) { Text("Remove from this phone") }
+            } else {
+                OutlinedButton(onClick = { controller.followLocally(pubKey) }) { Text("Follow on this phone") }
+            }
+        }
+        Text(
+            if (isPublic || isLocal) {
+                "A public follow is listed in a signed note anyone can read. A follow on this phone is told to nobody."
+            } else {
+                "Following publicly republishes your whole follow list. Following on this phone tells no relay anything."
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Not a refusal: the follow still publishes. But a list built from
+        // nothing replaces the real one everywhere, and that is worth knowing
+        // before the tap rather than after it.
+        if (!isPublic && !controller.publicFollowListKnown) {
+            Text(
+                "Your existing follow list has not loaded yet, so following publicly now would publish a list " +
+                    "containing only this person.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

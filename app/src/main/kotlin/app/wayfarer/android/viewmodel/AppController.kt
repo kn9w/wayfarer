@@ -15,6 +15,7 @@ import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.Mentions
 import app.wayfarer.core.relay.RelayInfoService
 import app.wayfarer.core.repo.Account
+import app.wayfarer.core.repo.FollowSource
 import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.LoginResult
 import app.wayfarer.core.repo.PublishError
@@ -533,6 +534,9 @@ class AppController(
         run {
             core.accounts.logout()
             core.contacts.clear()
+            // Forgotten, not deleted: the list is keyed by the account that owns
+            // it and comes back when they sign in again, like their relay grants.
+            core.localFollows.clear()
             feedState.value = FeedState()
             revealedKeyState.value = null
             relayListPromptState.value = false
@@ -600,6 +604,7 @@ class AppController(
         core.relayListRepo.refresh(account.pubKey)?.let { core.relayListRepo.offerToDirectory(it, isOwnAccount = true) }
         core.profiles.load(account.pubKey)
         core.contacts.load(account.pubKey)
+        core.localFollows.load(account.pubKey)
 
         loadFeed()
         recomputeRelayListPrompt()
@@ -661,7 +666,7 @@ class AppController(
         ensureTransportStarted()
 
         val me = core.accounts.account.value
-        val follows = core.contacts.follows.value
+        val follows = core.follows.now
         val browsing = global.currentMode == BrowseMode.Relay
 
         val result =
@@ -733,7 +738,7 @@ class AppController(
 
 
         val me = core.accounts.account.value
-        val follows = core.contacts.follows.value
+        val follows = core.follows.now
         val browsing = global.currentMode == BrowseMode.Relay
         val relay = global.currentRelay
         if (browsing && relay == null) return
@@ -1078,6 +1083,73 @@ class AppController(
 
     val threadReplies: StateFlow<Map<EventId, Note>> get() = core.threads.allReplies
 
+    // ---- following ---------------------------------------------------------
+
+    /** The public kind 3 list. */
+    val publishedFollows: StateFlow<Set<PubKey>> get() = core.contacts.follows
+
+    /** This phone's own list. */
+    val localFollows: StateFlow<Set<PubKey>> get() = core.localFollows.follows
+
+    /** Which list, or lists, somebody is on. Null when nobody is signed in. */
+    fun followSourcesOf(pubKey: PubKey): Set<FollowSource> = core.follows.sourcesOf(pubKey)
+
+    /**
+     * Whether a public follow would be published from a list nobody has seen.
+     *
+     * A kind 3 names everybody at once, so republishing one built from an empty
+     * cache replaces the real list everywhere. The screen says so; it does not
+     * refuse, because the alternative is a follow button that silently does
+     * nothing on a cold start.
+     */
+    val publicFollowListKnown: Boolean get() = core.contacts.loaded
+
+    /** Adds somebody to this phone's own list. Published nowhere. */
+    fun followLocally(pubKey: PubKey) =
+        run {
+            if (core.accounts.account.value == null) {
+                messageState.value = UserMessage.Error("Sign in to keep a follow list on this phone.")
+                return@run
+            }
+            core.localFollows.add(pubKey)
+        }
+
+    fun unfollowLocally(pubKey: PubKey) = run { core.localFollows.remove(pubKey) }
+
+    /** Adds somebody to the public kind 3 list and republishes it. */
+    fun followPublicly(pubKey: PubKey) = changePublicFollow(pubKey, following = true)
+
+    fun unfollowPublicly(pubKey: PubKey) = changePublicFollow(pubKey, following = false)
+
+    private fun changePublicFollow(
+        pubKey: PubKey,
+        following: Boolean,
+    ) = run {
+        val me = core.accounts.account.value
+        if (me == null) {
+            messageState.value = UserMessage.Error("Sign in to change your public follow list.")
+            return@run
+        }
+        val signer = core.accounts.signer
+        if (signer == null || !signer.canSign) {
+            messageState.value =
+                UserMessage.Error("This account is watch-only, so it cannot publish a follow list. Follow on this phone instead.")
+            return@run
+        }
+        val result =
+            if (following) {
+                core.contacts.follow(signer, me.pubKey, pubKey)
+            } else {
+                core.contacts.unfollow(signer, me.pubKey, pubKey)
+            }
+        when (result) {
+            is PublishResult.Success -> messageState.value = UserMessage.Published(result.report)
+            is PublishResult.Failure ->
+                messageState.value =
+                    UserMessage.Error("Your follow list could not be published: ${result.error.describe()}")
+        }
+    }
+
     // ---- one event's own actions -------------------------------------------
 
     /** The event behind a post, if the store still has it. */
@@ -1244,6 +1316,9 @@ sealed interface Screen {
 
     /** The account's own NIP-65 list: where other people should look for it. */
     data object RelayList : Screen
+
+    /** Both follow lists, and what belongs to which. */
+    data object Follows : Screen
 
     /** Null address is a new article; otherwise an edit that keeps the d tag. */
     data class EditArticle(
