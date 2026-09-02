@@ -6,17 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -27,8 +28,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +41,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -57,6 +57,7 @@ import app.wayfarer.android.ui.screen.OnboardingSurface
 import app.wayfarer.android.ui.screen.PagingBar
 import app.wayfarer.android.ui.screen.ProfileScreen
 import app.wayfarer.android.ui.screen.ReadArticleScreen
+import app.wayfarer.android.ui.screen.ReadNoteScreen
 import app.wayfarer.android.ui.screen.RelayListScreen
 import app.wayfarer.android.ui.screen.RelayScreen
 import app.wayfarer.android.ui.screen.SettingsScreen
@@ -65,8 +66,8 @@ import app.wayfarer.android.viewmodel.DeviceAuthOutcome
 import app.wayfarer.android.viewmodel.ExternalSignerIdentity
 import app.wayfarer.android.viewmodel.OnboardingStep
 import app.wayfarer.android.viewmodel.Screen
-import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.Wayfarer
+import app.wayfarer.core.repo.HeaderStyle
 import kotlinx.coroutines.CoroutineScope
 
 /**
@@ -220,31 +221,19 @@ fun WayfarerApp(
                 // the content and sat exactly on the "next" arrow — hiding it and
                 // taking its taps, so advancing opened the compose sheet instead.
                 if (screen is Screen.Home) PagingBar(controller)
-                // 64dp rather than Material's 80dp: the two tabs still clear the
-                // 48dp touch target with their labels, and the bar was spending
-                // the difference on nothing.
-                NavigationBar(modifier = Modifier.height(64.dp)) {
-                    NavigationBarItem(
-                        // Composing and reading are reached from here, so the tab
-                        // stays lit while the user is in one of them.
-                        selected =
-                            screen is Screen.Home || screen is Screen.Compose ||
-                                screen is Screen.EditArticle || screen is Screen.ReadArticle,
-                        onClick = { controller.goToRoot(Screen.Home) },
-                        icon = { Icon(WayfarerIcons.Globe, contentDescription = null) },
-                        label = { Text("Global") },
-                    )
-                    NavigationBarItem(
-                        selected = screen is Screen.Profile || screen is Screen.EditProfile || screen is Screen.RelayList,
-                        // Without an account there is no profile to open, so the tab goes
-                        // where a signed-out user's options actually are.
-                        onClick = {
-                            account?.let { controller.openProfileAsRoot(it.pubKey) } ?: controller.goToRoot(Screen.Settings)
-                        },
-                        icon = { Icon(WayfarerIcons.Tree, contentDescription = null) },
-                        label = { Text("Local") },
-                    )
-                }
+                TabBar(
+                    globalSelected =
+                        screen is Screen.Home || screen is Screen.Compose ||
+                            screen is Screen.EditArticle || screen is Screen.ReadArticle ||
+                            screen is Screen.ReadNote,
+                    localSelected = screen is Screen.Profile || screen is Screen.EditProfile || screen is Screen.RelayList,
+                    onGlobal = { controller.goToRoot(Screen.Home) },
+                    // Without an account there is no profile to open, so the tab goes
+                    // where a signed-out user's options actually are.
+                    onLocal = {
+                        account?.let { controller.openProfileAsRoot(it.pubKey) } ?: controller.goToRoot(Screen.Settings)
+                    },
+                )
             }
         },
     ) { padding ->
@@ -264,6 +253,7 @@ fun WayfarerApp(
                 Screen.RelayList -> RelayListScreen(controller)
                 is Screen.EditArticle -> EditArticleScreen(controller, current.address)
                 is Screen.ReadArticle -> ReadArticleScreen(controller, current.address)
+                is Screen.ReadNote -> ReadNoteScreen(controller, current.id)
                 is Screen.Profile -> ProfileScreen(controller, current.pubKey)
             }
         }
@@ -330,11 +320,16 @@ private fun AppHeader(
 ) {
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
+            // The whole bar is the target, not just the icon on the end. Every
+            // word in it is about relays, so anywhere in it meaning "show me the
+            // relays" is what a reader would expect. The back button keeps its
+            // own tap: a child that handles a click consumes it.
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .height(if (style == HeaderStyle.Compact) 32.dp else 40.dp)
+                    .clickable(onClick = onRelays)
                     .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -371,6 +366,59 @@ private fun AppHeader(
                 Icon(WayfarerIcons.Relay, contentDescription = "Relays")
             }
         }
+    }
+}
+
+/**
+ * The two tabs, built rather than squeezed.
+ *
+ * Material's NavigationBar lays its items out at a fixed internal height and
+ * adds its own window insets, so constraining the container to 64dp — which is
+ * what this used to do — did not shrink the items, it clipped them. Measuring
+ * from the content instead gives the same compact bar with nothing cut off, and
+ * the inset padding that Material was applying now has to be applied here.
+ */
+@Composable
+private fun TabBar(
+    globalSelected: Boolean,
+    localSelected: Boolean,
+    onGlobal: () -> Unit,
+    onLocal: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .height(64.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Tab(WayfarerIcons.Globe, "Global", globalSelected, onGlobal, Modifier.weight(1f))
+            Tab(WayfarerIcons.Tree, "Local", localSelected, onLocal, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun Tab(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tint =
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        modifier = modifier.fillMaxHeight().clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = tint)
     }
 }
 

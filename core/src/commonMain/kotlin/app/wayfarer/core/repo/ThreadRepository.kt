@@ -44,6 +44,7 @@ class ThreadRepository(
     private val clock: Clock,
     private val hints: RelayHintQueue? = null,
     private val describe: (PubKey) -> String = { it.abbreviated() },
+    private val events: EventStore? = null,
 ) {
     private val comments = MutableStateFlow<Map<EventId, Comment>>(emptyMap())
     private val replies = MutableStateFlow<Map<EventId, Note>>(emptyMap())
@@ -175,6 +176,10 @@ class ThreadRepository(
         )
 
         Comment.fromEvent(event, relay)?.let { incoming ->
+            // Only once this is known to be part of a conversation: absorb is
+            // handed everything a relay returned, and storing what it rejects
+            // would fill the store with events nothing can show.
+            events?.put(event)
             val existing = comments.value[incoming.id]
             val merged = existing?.mergeSeenOn(incoming.seenOn) ?: incoming
             if (merged !== existing) comments.value = comments.value + (merged.id to merged)
@@ -184,6 +189,7 @@ class ThreadRepository(
         // A kind 1 with no reply target is somebody's own post that happens to
         // mention this event, not a reply to it.
         val reply = Note.fromEvent(event, relay)?.takeIf { it.replyTo != null } ?: return false
+        events?.put(event)
         val existing = replies.value[reply.id]
         val merged = existing?.mergeSeenOn(reply.seenOn) ?: reply
         if (merged !== existing) replies.value = replies.value + (merged.id to merged)

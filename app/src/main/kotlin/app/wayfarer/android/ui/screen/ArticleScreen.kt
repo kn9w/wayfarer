@@ -30,8 +30,8 @@ import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfArticle
-import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.Article
+import app.wayfarer.core.model.EventKind
 
 /**
  * A long-form article in a list: title, summary, and what it is.
@@ -65,6 +65,7 @@ fun ArticleRow(
             createdAt = article.publishedAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(article.author) },
+            trailing = { EventMenu(article.id, controller) },
         )
         Text(
             "seen on " + article.seenOn.joinToString(", ") { it.display() }.ifBlank { "this device" },

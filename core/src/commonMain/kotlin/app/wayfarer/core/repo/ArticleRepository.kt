@@ -31,6 +31,7 @@ class ArticleRepository(
     private val router: OutboxRouter,
     private val relayLists: RelayListRepository,
     private val clock: Clock,
+    private val events: EventStore? = null,
 ) {
     private val articles = MutableStateFlow<Map<String, Article>>(emptyMap())
 
@@ -85,6 +86,7 @@ class ArticleRepository(
         if (!codec.verify(event)) return null
 
         val incoming = codec.readArticle(event) ?: return null
+        events?.put(event)
         val withRelay = if (relay != null) incoming.mergeSeenOn(setOf(relay)) else incoming
 
         val existing = articles.value[withRelay.address]

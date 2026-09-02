@@ -19,33 +19,39 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -61,11 +67,13 @@ import app.wayfarer.android.viewmodel.GlobalState
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfNote
+import app.wayfarer.core.model.EventId
+import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.model.ThreadRef
 import app.wayfarer.core.repo.ThreadNode
 import app.wayfarer.core.repo.threadTree
-import app.wayfarer.core.model.Note
 
 /** Horizontal inset shared by every post, so names and bodies line up down the feed. */
 internal val PostHorizontalPadding = 16.dp
@@ -719,13 +727,11 @@ private fun ThreadEntryRow(
         )
         Text(entry.content, style = MaterialTheme.typography.bodySmall)
 
-        if (foldable) {
+        // Only when something is actually hidden. An instruction under every
+        // foldable reply was noise on the far more common case where nothing is.
+        if (collapsed && node.descendants > 0) {
             Text(
-                if (collapsed) {
-                    if (node.descendants == 1) "1 reply hidden — hold to show" else "${node.descendants} replies hidden — hold to show"
-                } else {
-                    "hold to fold"
-                },
+                if (node.descendants == 1) "1 reply hidden" else "${node.descendants} replies hidden",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -766,6 +772,11 @@ internal fun PostDivider() {
 fun NoteRow(
     note: Note,
     controller: AppController,
+    /**
+     * Opens the note on its own screen. Given only where a note sits in a list
+     * of many; on the note's own screen there is nowhere further to go.
+     */
+    onOpen: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 12.dp),
@@ -776,6 +787,7 @@ fun NoteRow(
             createdAt = note.createdAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(note.author) },
+            trailing = { EventMenu(note.id, controller) },
         )
 
         // A reply used to render as though it were a post of its own, because
@@ -796,7 +808,13 @@ fun NoteRow(
             )
         }
 
-        Text(note.content, style = MaterialTheme.typography.bodyMedium)
+        // The body opens the note, rather than the whole row: the reply controls
+        // and the menu below have taps of their own that must keep working.
+        Text(
+            note.content,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = if (onOpen == null) Modifier else Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        )
 
         // Provenance: which relay actually delivered this note. Under the
         // outbox model that is a meaningful thing to be able to see.
@@ -818,6 +836,8 @@ internal fun PostByline(
     createdAt: Long,
     controller: AppController,
     onOpenAuthor: (() -> Unit)? = null,
+    /** Sits after the timestamp. The overflow menu, where a post has one. */
+    trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -841,5 +861,174 @@ internal fun PostByline(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        trailing?.invoke()
     }
+}
+
+/**
+ * What can be done with one event.
+ *
+ * All three answers need the event itself rather than the note or article built
+ * from it — a projection has no signature, no tags and no id to send — which is
+ * why the repositories keep what they absorbed.
+ */
+@Composable
+internal fun EventMenu(
+    id: EventId,
+    controller: AppController,
+) {
+    var open by remember { mutableStateOf(false) }
+    var showingJson by remember { mutableStateOf(false) }
+    var rebroadcasting by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.size(28.dp)) {
+            Icon(
+                WayfarerIcons.More,
+                contentDescription = "More",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Copy event id") },
+                onClick = {
+                    clipboard.setText(AnnotatedString(id.hex))
+                    open = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("View raw JSON") },
+                onClick = {
+                    showingJson = true
+                    open = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Rebroadcast") },
+                onClick = {
+                    rebroadcasting = true
+                    open = false
+                },
+            )
+        }
+    }
+
+    if (showingJson) {
+        RawJsonDialog(
+            json = controller.rawJsonOf(id),
+            onCopy = { clipboard.setText(AnnotatedString(it)) },
+            onDismiss = { showingJson = false },
+        )
+    }
+
+    if (rebroadcasting) {
+        RebroadcastDialog(
+            controller = controller,
+            onSend = { relays ->
+                controller.rebroadcast(id, relays)
+                rebroadcasting = false
+            },
+            onDismiss = { rebroadcasting = false },
+        )
+    }
+}
+
+@Composable
+private fun RawJsonDialog(
+    json: String?,
+    onCopy: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Raw event") },
+        text = {
+            if (json == null) {
+                Text("This post's event is no longer held, so there is nothing to show.")
+            } else {
+                Text(
+                    json,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                )
+            }
+        },
+        confirmButton = {
+            if (json != null) {
+                TextButton(onClick = {
+                    onCopy(json)
+                    onDismiss()
+                }) { Text("Copy") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/**
+ * Where to send it again.
+ *
+ * Write-approved relays only: a relay approved for reading was approved for
+ * reading, and sending to it under the heading of "approved" would be putting
+ * the user's posts somewhere they did not agree to.
+ */
+@Composable
+private fun RebroadcastDialog(
+    controller: AppController,
+    onSend: (Set<RelayUrl>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val targets = remember { controller.rebroadcastTargets() }
+    val chosen = remember { mutableStateListOf<RelayUrl>() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send this post again") },
+        text = {
+            if (targets.isEmpty()) {
+                Text(
+                    "No relay is approved for sending. Approve one for \"Send my posts\" in Relays first — " +
+                        "a relay you allowed only for getting posts is not one you agreed to publish to.",
+                )
+            } else {
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        "The same event, unchanged, offered to somewhere else that will carry it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    for (relay in targets) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (relay in chosen) chosen.remove(relay) else chosen.add(relay)
+                                    }.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Checkbox(
+                                checked = relay in chosen,
+                                onCheckedChange = {
+                                    if (relay in chosen) chosen.remove(relay) else chosen.add(relay)
+                                },
+                            )
+                            Text(relay.display(), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (targets.isNotEmpty()) {
+                Button(onClick = { onSend(chosen.toSet()) }, enabled = chosen.isNotEmpty()) { Text("Send") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

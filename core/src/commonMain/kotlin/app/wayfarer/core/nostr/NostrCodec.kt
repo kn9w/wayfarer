@@ -74,6 +74,17 @@ interface NostrCodec {
     /** Parses a signed event handed back by an external signer. Null if unusable. */
     fun decodeEvent(json: String): NostrEvent?
 
+    /**
+     * Serializes a signed event as the JSON it travels as.
+     *
+     * The inverse of [decodeEvent], and here for the same reason
+     * [encodeForSigning] is: the escaping should be done by the code that parses
+     * events off the wire rather than by a second writer that can disagree with
+     * it. Used to show a reader the event behind a post, so it is display and
+     * clipboard output — nothing is signed or hashed from it.
+     */
+    fun encodeEvent(event: NostrEvent): String
+
     /** Verifies id and signature. Events failing this are dropped on arrival. */
     fun verify(event: NostrEvent): Boolean
 }

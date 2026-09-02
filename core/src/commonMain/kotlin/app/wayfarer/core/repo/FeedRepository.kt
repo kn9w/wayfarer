@@ -48,6 +48,8 @@ class FeedRepository(
      * stall every event behind it.
      */
     private val hints: RelayHintQueue? = null,
+    /** Where the event itself is kept, so a note on screen can still be shown raw. */
+    private val events: EventStore? = null,
 ) {
     private val notes = MutableStateFlow<Map<EventId, Note>>(emptyMap())
 
@@ -189,6 +191,9 @@ class FeedRepository(
         if (!codec.verify(event)) return null
 
         val incoming = Note.fromEvent(event, relay) ?: return null
+        // Before the merge below can return early: the projection may be a
+        // duplicate while this is still the first time the event itself is seen.
+        events?.put(event)
         hints?.offer(
             event.relayHints(),
             DiscoveryReason(DiscoverySource.EVENT_HINT, "a post by ${describe(incoming.author)} you read pointed at it"),

@@ -16,13 +16,14 @@ import app.wayfarer.core.relay.RelayInfoService
 import app.wayfarer.core.repo.AccountManager
 import app.wayfarer.core.repo.ArticleRepository
 import app.wayfarer.core.repo.ContactRepository
+import app.wayfarer.core.repo.EventStore
 import app.wayfarer.core.repo.FeedRepository
 import app.wayfarer.core.repo.OnboardingStore
 import app.wayfarer.core.repo.PreferencesStore
 import app.wayfarer.core.repo.ProfileRepository
 import app.wayfarer.core.repo.RelayListRepository
-import app.wayfarer.core.repo.ThreadRepository
 import app.wayfarer.core.repo.SignerFactory
+import app.wayfarer.core.repo.ThreadRepository
 import app.wayfarer.core.store.KeyValueStore
 import app.wayfarer.core.store.PersistedRelayDirectoryStore
 import app.wayfarer.core.store.RelayDirectoryCodec
@@ -76,11 +77,15 @@ class Wayfarer private constructor(
     val relayListRepo: RelayListRepository,
     val normalizer: RelayUrlNormalizer,
     val bech32: Bech32Codec,
+    /** Exposed for the one thing the UI needs from it: an event as its own JSON. */
+    val codec: NostrCodec,
     val onboarding: OnboardingStore,
     /** Settings the user can change. */
     val preferences: PreferencesStore,
     /** Relay hints noticed while reading, waiting to be recorded. */
     val relayHints: RelayHintQueue,
+    /** The events behind the projections, for showing one raw or sending it again. */
+    val events: EventStore,
     /**
      * The wall clock the repositories were built with.
      *
@@ -152,7 +157,8 @@ class Wayfarer private constructor(
                     describe = describe,
                 )
 
-            val articleRepo = ArticleRepository(transport, backend.codec, router, relayListRepo, backend.clock)
+            val eventStore = EventStore()
+            val articleRepo = ArticleRepository(transport, backend.codec, router, relayListRepo, backend.clock, eventStore)
             val hintQueue = RelayHintQueue()
 
             return Wayfarer(
@@ -172,18 +178,20 @@ class Wayfarer private constructor(
                 feed =
                     FeedRepository(
                         transport, backend.codec, router, relayListRepo, backend.clock,
-                        describe, articleRepo, hintQueue,
+                        describe, articleRepo, hintQueue, eventStore,
                     ),
                 articles = articleRepo,
-                threads = ThreadRepository(transport, backend.codec, router, backend.clock, hintQueue, describe),
+                threads = ThreadRepository(transport, backend.codec, router, backend.clock, hintQueue, describe, eventStore),
                 relayInfo = RelayInfoService(backend.relayInfoFetcher),
                 contacts = ContactRepository(transport, backend.codec, router, relayListRepo),
                 relayListRepo = relayListRepo,
                 normalizer = backend.normalizer,
                 bech32 = backend.bech32,
+                codec = backend.codec,
                 onboarding = OnboardingStore(settings),
                 preferences = PreferencesStore(settings).also { it.load() },
                 relayHints = hintQueue,
+                events = eventStore,
                 clock = backend.clock,
                 suggestedRelays = suggested,
             )

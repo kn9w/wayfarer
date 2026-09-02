@@ -200,6 +200,21 @@ class QuartzNostrCodec : NostrCodec {
     override fun decodeEvent(json: String): NostrEvent? = Event.fromJsonOrNull(json)?.let(QuartzEventMapping::toCore)
 
     /**
+     * The signed event, as JSON. Same construction as [encodeForSigning], with
+     * the id and signature this one actually has.
+     */
+    override fun encodeEvent(event: NostrEvent): String =
+        Event(
+            id = event.id.hex,
+            pubKey = event.pubKey.hex,
+            createdAt = event.createdAt,
+            kind = event.kind,
+            tags = event.tags.map { it.toTypedArray() }.toTypedArray(),
+            content = event.content,
+            sig = event.sig,
+        ).toJson()
+
+    /**
      * Recomputes the id from the serialized event and checks the schnorr
      * signature. Quartz's `verify()` does both; an event failing either is
      * dropped before it reaches the note store.

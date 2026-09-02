@@ -14,21 +14,25 @@ import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
+import app.wayfarer.core.noteEvent
+import app.wayfarer.core.pubKey
+import app.wayfarer.core.relay
 import app.wayfarer.core.repo.Credential
 import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.SignerFactory
 import app.wayfarer.core.store.KeyValueStore
 import app.wayfarer.core.testNormalizer
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * Wiring-level checks on the layer between the UI and the core.
@@ -1061,6 +1065,112 @@ class AppControllerTest {
             runCurrent()
 
             assertEquals(core.relayDirectory.pending.keys.first(), controller.relayInfoPrompt.value)
+        }
+
+    // ---- one event's own actions ------------------------------------------
+
+    @Test
+    fun `a post's own event can be shown raw and sent again`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            val event = noteEvent(pubKey(7), "hello", createdAt = 100)
+            core.feed.absorb(event, relay("a.example"))
+
+            // The projection has no signature or tags; the store keeps what did.
+            assertEquals(event, controller.eventOf(event.id))
+            val json = controller.rawJsonOf(event.id)
+            assertNotNull(json)
+            assertTrue(event.id.hex in json, "the raw event has to carry its own id")
+        }
+
+    @Test
+    fun `an event nobody holds has no JSON rather than a crash`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+
+            assertNull(controller.rawJsonOf(EventId("ab".repeat(32))))
+            assertNull(controller.eventOf(EventId("ab".repeat(32))))
+        }
+
+    @Test
+    fun `only write-approved relays are offered to send to`() =
+        runTest {
+            // Publishing is writing. A relay allowed only for getting posts was
+            // not agreed to as somewhere this phone sends things.
+            val core = wayfarer()
+            val sendable = relay("send.example")
+            val readOnly = relay("read.example")
+            val blocked = relay("blocked.example")
+            core.relayDirectory.approve(sendable, read = true, write = true)
+            core.relayDirectory.approve(readOnly, read = true, write = false)
+            core.relayDirectory.deny(blocked)
+
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            assertEquals(listOf(sendable), controller.rebroadcastTargets())
+        }
+
+    @Test
+    fun `rebroadcasting sends the same event to exactly the relays chosen`() =
+        runTest {
+            val core = wayfarer()
+            val here = relay("here.example")
+            val elsewhere = relay("elsewhere.example")
+            core.relayDirectory.approve(here, read = true, write = true)
+            core.relayDirectory.approve(elsewhere, read = true, write = true)
+
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            val event = noteEvent(pubKey(7), "hello", createdAt = 100)
+            core.feed.absorb(event, relay("a.example"))
+            transport.published.clear()
+
+            controller.rebroadcast(event.id, setOf(here))
+            runCurrent()
+
+            val (sent, relays) = transport.published.single()
+            // Unchanged: nothing is re-signed, and nothing is rewritten.
+            assertEquals(event, sent)
+            assertEquals(setOf(here), relays)
+        }
+
+    @Test
+    fun `rebroadcasting an event nobody holds reports it instead of throwing`() =
+        runTest {
+            val core = wayfarer()
+            core.relayDirectory.approve(relay("here.example"), read = true, write = true)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            controller.rebroadcast(EventId("ab".repeat(32)), setOf(relay("here.example")))
+            runCurrent()
+
+            assertTrue(controller.message.value is UserMessage.Error)
+            assertTrue(transport.published.isEmpty())
+        }
+
+    @Test
+    fun `rebroadcasting nowhere is refused rather than reported as sent`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            val event = noteEvent(pubKey(7), "hello", createdAt = 100)
+            core.feed.absorb(event, relay("a.example"))
+            transport.published.clear()
+
+            controller.rebroadcast(event.id, emptySet())
+            runCurrent()
+
+            assertTrue(controller.message.value is UserMessage.Error)
+            assertTrue(transport.published.isEmpty())
         }
 
     // ---- conversations ----------------------------------------------------

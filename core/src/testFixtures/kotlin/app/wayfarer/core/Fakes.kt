@@ -181,6 +181,13 @@ class FakeCodec(
 
     override fun decodeEvent(json: String): NostrEvent? = null
 
+    /**
+     * Enough of the real shape to assert against — the id, kind and content are
+     * what a test cares about, and the real escaping belongs to Quartz.
+     */
+    override fun encodeEvent(event: NostrEvent): String =
+        """{"id":"${event.id.hex}","kind":${event.kind},"content":"${event.content}"}"""
+
     override fun verify(event: NostrEvent): Boolean = verifies
 }
 

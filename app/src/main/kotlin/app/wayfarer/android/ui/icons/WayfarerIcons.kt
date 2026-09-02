@@ -217,6 +217,18 @@ object WayfarerIcons {
                 }
             }.also { _block = it }
 
+    /** Overflow: the three dots every platform uses for "more of this". */
+    val More: ImageVector
+        get() =
+            _more ?: icon("More") {
+                filled {
+                    circle(cx = 12f, cy = 5f, r = 1.8f)
+                    circle(cx = 12f, cy = 12f, r = 1.8f)
+                    circle(cx = 12f, cy = 19f, r = 1.8f)
+                }
+            }.also { _more = it }
+
+    private var _more: ImageVector? = null
     private var _globe: ImageVector? = null
     private var _tree: ImageVector? = null
     private var _relay: ImageVector? = null

@@ -6,19 +6,20 @@ import app.wayfarer.core.model.ArticleDraft
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.EventId
+import app.wayfarer.core.model.NostrEvent
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.Profile
 import app.wayfarer.core.model.ProfileDraft
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.Mentions
+import app.wayfarer.core.relay.RelayInfoService
 import app.wayfarer.core.repo.Account
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.LoginResult
 import app.wayfarer.core.repo.PublishError
 import app.wayfarer.core.repo.PublishReport
-import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.PublishResult
-import app.wayfarer.core.relay.RelayInfoService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1067,6 +1068,70 @@ class AppController(
     }
 
     /**
+     * Every note held, whether it arrived as a post or as somebody's reply.
+     *
+     * Two stores because replies are kept apart from the feed — that separation
+     * is what stopped them rendering as top-level posts — and a note opened on
+     * its own screen can have come from either.
+     */
+    val allNotes: StateFlow<Map<EventId, Note>> get() = core.feed.allNotes
+
+    val threadReplies: StateFlow<Map<EventId, Note>> get() = core.threads.allReplies
+
+    // ---- one event's own actions -------------------------------------------
+
+    /** The event behind a post, if the store still has it. */
+    fun eventOf(id: EventId): NostrEvent? = core.events[id]
+
+    /** The event as JSON, for showing or copying. Null when it is not held. */
+    fun rawJsonOf(id: EventId): String? = core.events[id]?.let(core.codec::encodeEvent)
+
+    /**
+     * Relays this phone may send to.
+     *
+     * Write-approved only. Publishing is writing, and a relay approved for
+     * reading was approved for exactly that — offering it here would be asking
+     * the user to authorise a send by a different name.
+     */
+    fun rebroadcastTargets(): List<RelayUrl> =
+        core.relayDirectory.grants.values
+            .filter { it.write }
+            .map { it.url }
+            .sortedBy { it.display() }
+
+    /**
+     * Sends an event this app already holds to relays the user picked.
+     *
+     * Nothing is re-signed and nothing is rewritten: the same event, offered to
+     * somewhere else that will carry it. Nostr has no other way to move a post
+     * to a relay that never received it.
+     */
+    fun rebroadcast(
+        id: EventId,
+        relays: Set<RelayUrl>,
+    ) {
+        val event = core.events[id]
+        if (event == null) {
+            messageState.value = UserMessage.Error("That post's event is no longer held, so it cannot be sent again.")
+            return
+        }
+        if (relays.isEmpty()) {
+            messageState.value = UserMessage.Error("Choose at least one relay to send it to.")
+            return
+        }
+        scope.launch {
+            val outcomes = core.transport.publish(event, relays)
+            val accepted = outcomes.count { it.value.accepted }
+            messageState.value =
+                if (accepted == 0) {
+                    UserMessage.Error("No relay accepted it.")
+                } else {
+                    UserMessage.Info("Sent to $accepted of ${outcomes.size} ${if (outcomes.size == 1) "relay" else "relays"}.")
+                }
+        }
+    }
+
+    /**
      * Who wrote an event, if it has been seen.
      *
      * Replies are stored apart from the feed — that separation is what stopped
@@ -1187,6 +1252,11 @@ sealed interface Screen {
 
     data class ReadArticle(
         val address: String,
+    ) : Screen
+
+    /** One note, on its own, with its conversation already open. */
+    data class ReadNote(
+        val id: EventId,
     ) : Screen
 
     data class Profile(
