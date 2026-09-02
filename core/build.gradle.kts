@@ -1,18 +1,19 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.library)
 }
 
 kotlin {
     jvmToolchain(17)
 
-    androidTarget()
-
-    // Present so the pure logic in commonMain (relay gate, outbox routing, feed
-    // merging) can be unit-tested on a plain JVM without an emulator. Adding
-    // iosArm64()/iosSimulatorArm64() here is all that is needed to take the core
-    // to iOS: Quartz publishes those targets too, and this module has no
-    // platform-specific code.
+    // No Android target, and so no Android Gradle plugin. This module has no
+    // Android source — only commonMain — so an androidTarget() built an AAR with
+    // nothing Android in it, and applying com.android.library alongside the
+    // multiplatform plugin is the combination AGP is dropping.
+    //
+    // :app consumes this anyway: an androidJvm consumer resolves a jvm producer,
+    // which is the same rule that lets an Android app depend on any plain
+    // Kotlin/JVM library. Adding iosArm64()/iosSimulatorArm64() here is still all
+    // that is needed to take the core to iOS.
     jvm()
 
     sourceSets {
@@ -23,9 +24,10 @@ kotlin {
         }
         commonTest {
             // Test doubles shared with the app module's unit tests. Kept out of
-            // commonMain so they never ship, and out of commonTest so the app can
-            // pick them up without depending on core's test artifact — which a KMP
-            // module cannot conveniently publish.
+            // commonMain so they never ship, and in their own directory rather
+            // than under commonTest/kotlin so the app can add the same directory
+            // to its own test source set — a KMP module cannot conveniently
+            // publish a test artifact for the app to depend on instead.
             kotlin.srcDir("src/testFixtures/kotlin")
 
             dependencies {
@@ -33,13 +35,5 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.test)
             }
         }
-    }
-}
-
-android {
-    namespace = "app.wayfarer.core"
-    compileSdk = libs.versions.compileSdk.get().toInt()
-    defaultConfig {
-        minSdk = libs.versions.minSdk.get().toInt()
     }
 }

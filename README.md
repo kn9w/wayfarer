@@ -29,10 +29,12 @@ explicitly approved by the user.
 ## Architecture
 
 ```
-core/          All app logic, as a Kotlin Multiplatform module. Depends on the Kotlin
+core/          All app logic, as a Kotlin Multiplatform module with a JVM target and
+               no Android target — it has no Android source. Depends on the Kotlin
                stdlib and kotlinx-coroutines, and nothing else — no nostr library,
                no JSON library, no Android, no UI.
 nostr-quartz/  The only module that imports Quartz. Implements core's interfaces.
+               An Android library: everything in it is Android-only.
 app/           Android application: Compose UI, view models, platform storage.
 ```
 
@@ -171,15 +173,19 @@ one non-exported activity that decodes frames in memory and stores nothing.
 
 ```sh
 ./gradlew :app:assembleDebug
-./gradlew test
+./gradlew :core:jvmTest :nostr-quartz:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-Requires JDK 17 and an Android SDK with API 36. `google()` is needed as a repository even for the
-non-UI modules, because Quartz depends on androidx artifacts published only there.
+The unit tests are named individually because `core` is a multiplatform module and so has no plain
+`test` task — `./gradlew test` silently skips it.
+
+Requires JDK 17. Only `nostr-quartz` and `app` need the Android SDK (API 36); `core` applies no
+Android plugin and builds on the JDK alone. `google()` is needed as a repository even for
+`nostr-quartz`, because Quartz depends on androidx artifacts published only there.
 
 ## Status
 
-`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 114 unit tests
+`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 177 unit tests
 covering the relay gate, the set-cover router, NIP-11 consent, NIP-23 addressable replacement, the
 NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its separation from the local
 permission list, the onboarding sequence — including that a first launch
@@ -187,8 +193,10 @@ queries nothing, that the key screen is unreachable from the tab bar, and that l
 before touching the app's own relays — and round-trips through real secp256k1 signing and real
 Quartz parsing.
 
-The full Android build has not been run: `dl.google.com` was unreachable from the machine this was
-written on, so no androidx artifact or Android SDK could be fetched. The modules were verified by
+`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 100 tests green — which is
+possible precisely because it no longer applies the Android plugin. The rest of the Android build
+has not been run: `dl.google.com` was unreachable from the machine this was written on, so no
+androidx artifact or Android SDK could be fetched. The modules were verified by
 compiling against `quartz-jvm` and Compose Multiplatform, which mirror the same APIs, on a plain
 JVM. Seven files touching Android-only APIs are therefore unverified — `MainActivity`,
 `WayfarerApplication`, `AndroidStores`, `Nip55Bridge`, `AppSignerFactory`, `DeviceAuthBridge` and
