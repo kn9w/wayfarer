@@ -31,7 +31,27 @@ data class RelayScreenState(
     fun publishersAt(url: RelayUrl): Int = publisherCounts[url] ?: 0
 
     fun isFavourite(url: RelayUrl): Boolean = url in favourites
+
+    /**
+     * What this app currently permits for [url].
+     *
+     * The state carries three lists and no lookup, so every caller wanting one
+     * answer had to scan all three. [RelayApproval.Unknown] is a real answer
+     * rather than an absence: a relay somebody advertises that routing has never
+     * wanted is in none of the lists, and "not decided" is what the profile
+     * screen needs to show.
+     */
+    fun approvalOf(url: RelayUrl): RelayApproval =
+        when {
+            approved.any { it.url == url } -> RelayApproval.Allowed
+            pending.any { it.url == url } -> RelayApproval.Waiting
+            url in denied -> RelayApproval.Blocked
+            else -> RelayApproval.Unknown
+        }
 }
+
+/** What the app permits for one relay, as a single answer. */
+enum class RelayApproval { Allowed, Waiting, Blocked, Unknown }
 
 /**
  * The relay permission screen's state and actions.

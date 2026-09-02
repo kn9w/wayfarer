@@ -3,6 +3,8 @@ package app.wayfarer.android.viewmodel
 import app.wayfarer.core.Wayfarer
 import app.wayfarer.core.model.Article
 import app.wayfarer.core.model.ArticleDraft
+import app.wayfarer.core.model.DiscoveryReason
+import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.Profile
@@ -14,6 +16,7 @@ import app.wayfarer.core.repo.Account
 import app.wayfarer.core.repo.LoginResult
 import app.wayfarer.core.repo.PublishError
 import app.wayfarer.core.repo.PublishReport
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.PublishResult
 import app.wayfarer.core.relay.RelayInfoService
 import kotlinx.coroutines.CoroutineScope
@@ -83,6 +86,9 @@ class AppController(
 
     /** Authors seen streaming past whose profile is not cached yet. */
     private val pendingProfiles = MutableStateFlow<Set<PubKey>>(emptySet())
+
+    /** A relay whose details the user asked to see, from somewhere other than the relay list. */
+    private val relayFocusState = MutableStateFlow<RelayUrl?>(null)
     private val messageState = MutableStateFlow<UserMessage?>(null)
     private val feedState = MutableStateFlow(FeedState())
     private val viewedProfileState = MutableStateFlow<ViewedProfile?>(null)
@@ -799,6 +805,7 @@ class AppController(
                 pendingProfiles.value = emptySet()
                 try {
                     core.profiles.loadAll(batch)
+                    recordRelayHints()
                     feedState.value = feedState.value.copy(profiles = core.profiles.profiles.value)
                 } catch (failure: Throwable) {
                     // A name that could not be fetched is shown as an abbreviated
@@ -807,6 +814,20 @@ class AppController(
                     delay(PROFILE_BATCH_DELAY_MS)
                 }
             }
+        }
+    }
+
+    /**
+     * Files the relay hints noticed while reading.
+     *
+     * Drained here rather than at the point each event is absorbed, because that
+     * runs inside the subscription's collector where a suspending write would
+     * hold up every event behind it.
+     */
+    private suspend fun recordRelayHints() {
+        for ((reason, raw) in core.relayHints.drain()) {
+            val urls = raw.mapNotNull(core.normalizer::normalize).distinct()
+            if (urls.isNotEmpty()) core.relayDirectory.note(urls, reason)
         }
     }
 
@@ -976,6 +997,51 @@ class AppController(
      * cannot be a shortened npub in one place and truncated hex in another —
      * which is what happened when each call site picked its own fallback.
      */
+    /**
+     * The relay the relay screen should open on arrival, or null.
+     *
+     * A one-shot rather than a parameter on [Screen.Relays]: the sheet's open
+     * state lives inside the relay screen, and threading it through navigation
+     * would mean going back and forward re-opening the sheet by itself.
+     */
+    val relayFocus: StateFlow<RelayUrl?> = relayFocusState.asStateFlow()
+
+    /** Every NIP-65 list the app has seen, so a profile can react to one arriving. */
+    val relayLists get() = core.relayLists.lists
+
+    val headerStyle: StateFlow<HeaderStyle> get() = core.preferences.headerStyle
+
+    fun setHeaderStyle(style: HeaderStyle) =
+        scope.launch {
+            core.preferences.setHeaderStyle(style)
+        }
+
+    /**
+     * Opens one relay's details on the relay screen.
+     *
+     * Records it as pending first when nothing knows about it yet. A relay
+     * somebody advertises that routing has never wanted appears in none of the
+     * screen's three lists, and the sheet quietly closes on a relay it cannot
+     * find a row for — so without this the tap would look broken.
+     */
+    fun openRelayDetail(
+        url: RelayUrl,
+        because: String,
+    ) = run {
+        if (core.relayDirectory.grants[url] == null &&
+            core.relayDirectory.pending[url] == null &&
+            url !in core.relayDirectory.snapshot.value.denied
+        ) {
+            core.relayDirectory.note(listOf(url), DiscoveryReason(DiscoverySource.EVENT_HINT, because))
+        }
+        relayFocusState.value = url
+        go(Screen.Relays)
+    }
+
+    fun clearRelayFocus() {
+        relayFocusState.value = null
+    }
+
     /** What "active" means on the Global screen, in days. */
     val activityWindowDays: StateFlow<Int> get() = core.preferences.activityWindowDays
 

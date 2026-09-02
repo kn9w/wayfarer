@@ -209,12 +209,13 @@ fun noteEvent(
     content: String,
     createdAt: Long,
     idSeed: Int = createdAt.toInt(),
+    tags: List<List<String>> = emptyList(),
 ) = NostrEvent(
     id = EventId(idSeed.toString(16).padStart(2, '0').repeat(32).take(64)),
     pubKey = author,
     createdAt = createdAt,
     kind = EventKind.TEXT_NOTE,
-    tags = emptyList(),
+    tags = tags,
     content = content,
     sig = "0".repeat(128),
 )

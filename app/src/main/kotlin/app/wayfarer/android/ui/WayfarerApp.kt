@@ -1,10 +1,19 @@
 package app.wayfarer.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,9 +32,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -59,6 +68,7 @@ import app.wayfarer.android.viewmodel.DeviceAuthOutcome
 import app.wayfarer.android.viewmodel.ExternalSignerIdentity
 import app.wayfarer.android.viewmodel.OnboardingStep
 import app.wayfarer.android.viewmodel.Screen
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.Wayfarer
 import kotlinx.coroutines.CoroutineScope
 
@@ -141,6 +151,7 @@ fun WayfarerApp(
     }
 
     val canGoBack by controller.canGoBack.collectAsStateWithLifecycle()
+    val headerStyle by controller.headerStyle.collectAsStateWithLifecycle()
 
     val account by controller.account.collectAsStateWithLifecycle()
     val screen by controller.screen.collectAsStateWithLifecycle()
@@ -184,26 +195,14 @@ fun WayfarerApp(
 
     Scaffold(
         topBar = {
-            // One short line. It used to carry the app name over a status line,
-            // which spent the tallest part of the screen telling the user which
-            // app they had open; each screen titles itself now.
-            TopAppBar(
-                title = {
-                    Text(
-                        "${connected.size} connected · ${relayState.approved.size} allowed" +
-                            if (relayState.pending.isNotEmpty()) " · ${relayState.pending.size} waiting" else "",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                },
-                navigationIcon = {
-                    if (canGoBack) {
-                        IconButton(onClick = { controller.back() }) {
-                            Icon(WayfarerIcons.ArrowBack, contentDescription = "Back")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(),
+            AppHeader(
+                connected = connected.size,
+                allowed = relayState.approved.size,
+                waiting = relayState.pending.size,
+                style = headerStyle,
+                canGoBack = canGoBack,
+                onBack = { controller.back() },
+                onRelays = { controller.go(Screen.Relays) },
             )
         },
         floatingActionButton = {
@@ -244,12 +243,6 @@ fun WayfarerApp(
                         },
                         icon = { Icon(WayfarerIcons.Tree, contentDescription = null) },
                         label = { Text("Local") },
-                    )
-                    NavigationBarItem(
-                        selected = screen is Screen.Relays,
-                        onClick = { controller.goToRoot(Screen.Relays) },
-                        icon = { PendingBadge(relayState.pending.size, WayfarerIcons.Relay) },
-                        label = { Text("Relays") },
                     )
                 }
             }
@@ -312,7 +305,88 @@ private fun ComposeChooser(
     }
 }
 
-/** The relay tab's icon, carrying the number of relays waiting on a decision. */
+/**
+ * The app's header: one thin line, and the way to the relays.
+ *
+ * A plain Row rather than Material's TopAppBar, whose container height is fixed
+ * at 64dp — a quarter of a phone's chrome spent on a status line. That means
+ * taking on the status-bar inset ourselves, which the Scaffold slot would
+ * otherwise have handled.
+ *
+ * The relay icon lives here rather than in the navigation bar because relays are
+ * somewhere you visit occasionally and glance at constantly: the badge is the
+ * point, the destination is secondary, and a permanent third of the bottom bar
+ * was the wrong trade.
+ */
+@Composable
+private fun AppHeader(
+    connected: Int,
+    allowed: Int,
+    waiting: Int,
+    style: HeaderStyle,
+    canGoBack: Boolean,
+    onBack: () -> Unit,
+    onRelays: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .height(if (style == HeaderStyle.Compact) 32.dp else 40.dp)
+                    .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (canGoBack) {
+                IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+                    Icon(WayfarerIcons.ArrowBack, contentDescription = "Back", modifier = Modifier.size(20.dp))
+                }
+            }
+
+            if (style == HeaderStyle.Compact) {
+                ConnectionDot(connected > 0)
+                Text(
+                    "$connected · $allowed" + if (waiting > 0) " · $waiting" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            } else {
+                Text(
+                    "$connected connected · $allowed allowed" + if (waiting > 0) " · $waiting waiting" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            IconButton(onClick = onRelays, modifier = Modifier.size(36.dp)) {
+                PendingBadge(waiting, WayfarerIcons.Relay)
+            }
+        }
+    }
+}
+
+/** Green when something is connected, dim when nothing is. */
+@Composable
+private fun ConnectionDot(live: Boolean) {
+    Box(
+        Modifier
+            .padding(start = 8.dp)
+            .size(8.dp)
+            .background(
+                if (live) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                CircleShape,
+            ),
+    )
+}
+
+/** The relay icon, carrying the number of relays waiting on a decision. */
 @Composable
 private fun PendingBadge(
     pending: Int,

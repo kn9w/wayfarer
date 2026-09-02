@@ -1,6 +1,7 @@
 package app.wayfarer.core
 
 import app.wayfarer.core.repo.DEFAULT_ACTIVITY_WINDOW_DAYS
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.PreferencesStore
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -56,5 +57,32 @@ class PreferencesStoreTest {
             prefs.setActivityWindowDays(0)
 
             assertEquals(DEFAULT_ACTIVITY_WINDOW_DAYS, prefs.activityWindowDays.value)
+        }
+
+    @Test
+    fun `the header is standard until chosen, and remembers the choice`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val prefs = PreferencesStore(settings)
+            prefs.load()
+            assertEquals(HeaderStyle.Standard, prefs.headerStyle.value)
+
+            prefs.setHeaderStyle(HeaderStyle.Compact)
+            val restarted = PreferencesStore(settings)
+            restarted.load()
+
+            assertEquals(HeaderStyle.Compact, restarted.headerStyle.value)
+        }
+
+    @Test
+    fun `a header style that is not one of ours falls back`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            settings.values["ui.header.style"] = "Enormous"
+            val prefs = PreferencesStore(settings)
+
+            prefs.load()
+
+            assertEquals(HeaderStyle.Standard, prefs.headerStyle.value)
         }
 }

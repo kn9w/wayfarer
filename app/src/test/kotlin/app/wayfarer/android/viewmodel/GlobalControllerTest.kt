@@ -455,4 +455,33 @@ class GlobalControllerTest {
 
             assertEquals(listOf(alice), global.state.value.rotation)
         }
+
+    // ---- how the app answers "may I use this relay?" ----------------------
+
+    @Test
+    fun `every relay gets exactly one approval answer`() =
+        runTest {
+            val core = wayfarer()
+            val allowed = relay("allowed.example")
+            val blocked = relay("blocked.example")
+            val waiting = relay("waiting.example")
+            core.relayDirectory.approve(allowed, read = true, write = false)
+            core.relayDirectory.deny(blocked)
+            core.relayDirectory.note(
+                listOf(waiting),
+                app.wayfarer.core.model.DiscoveryReason(app.wayfarer.core.model.DiscoverySource.BOOTSTRAP),
+            )
+
+            val relays = RelayController(core, TestScope(testScheduler), {})
+            runCurrent()
+            val state = relays.state.value
+
+            assertEquals(RelayApproval.Allowed, state.approvalOf(allowed))
+            assertEquals(RelayApproval.Blocked, state.approvalOf(blocked))
+            assertEquals(RelayApproval.Waiting, state.approvalOf(waiting))
+            // Not an absence: a relay somebody advertises that routing has never
+            // wanted is in none of the lists, and "not decided" is what the
+            // profile screen has to show for it.
+            assertEquals(RelayApproval.Unknown, state.approvalOf(relay("stranger.example")))
+        }
 }

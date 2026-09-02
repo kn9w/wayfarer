@@ -37,11 +37,11 @@ enum class DiscoverySource {
     /** Listed in some other author's kind 10002 — outbox routing wants it. */
     AUTHOR_RELAY_LIST,
 
-    /** A relay hint carried on an event tag or a NIP-19 entity. */
+    /**
+     * A relay hint: position 2 of an `e` or `p` tag on an event that was read,
+     * or the relay list carried inside an `nprofile` the user opened.
+     */
     EVENT_HINT,
-
-    /** Listed in the account's kind 3 contact list (legacy relay field). */
-    CONTACT_LIST,
 }
 
 /** One reason a relay ended up in the pending queue, with human-readable context. */

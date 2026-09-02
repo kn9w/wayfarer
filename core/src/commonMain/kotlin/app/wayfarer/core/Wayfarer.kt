@@ -11,6 +11,7 @@ import app.wayfarer.core.outbox.OutboxConfig
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.outbox.RelayListCache
 import app.wayfarer.core.relay.RelayDirectory
+import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.relay.RelayInfoService
 import app.wayfarer.core.repo.AccountManager
 import app.wayfarer.core.repo.ArticleRepository
@@ -78,6 +79,8 @@ class Wayfarer private constructor(
     val onboarding: OnboardingStore,
     /** Settings the user can change. */
     val preferences: PreferencesStore,
+    /** Relay hints noticed while reading, waiting to be recorded. */
+    val relayHints: RelayHintQueue,
     /**
      * The wall clock the repositories were built with.
      *
@@ -150,6 +153,7 @@ class Wayfarer private constructor(
                 )
 
             val articleRepo = ArticleRepository(transport, backend.codec, router, relayListRepo, backend.clock)
+            val hintQueue = RelayHintQueue()
 
             return Wayfarer(
                 relayDirectory = directory,
@@ -165,9 +169,13 @@ class Wayfarer private constructor(
                         signerFactory = backend.signerFactory,
                     ),
                 profiles = ProfileRepository(transport, backend.codec, router, relayListRepo, backend.clock),
-                feed = FeedRepository(transport, backend.codec, router, relayListRepo, backend.clock, articleRepo),
+                feed =
+                    FeedRepository(
+                        transport, backend.codec, router, relayListRepo, backend.clock,
+                        describe, articleRepo, hintQueue,
+                    ),
                 articles = articleRepo,
-                threads = ThreadRepository(transport, backend.codec, router, backend.clock),
+                threads = ThreadRepository(transport, backend.codec, router, backend.clock, hintQueue, describe),
                 relayInfo = RelayInfoService(backend.relayInfoFetcher),
                 contacts = ContactRepository(transport, backend.codec, router, relayListRepo),
                 relayListRepo = relayListRepo,
@@ -175,6 +183,7 @@ class Wayfarer private constructor(
                 bech32 = backend.bech32,
                 onboarding = OnboardingStore(settings),
                 preferences = PreferencesStore(settings).also { it.load() },
+                relayHints = hintQueue,
                 clock = backend.clock,
                 suggestedRelays = suggested,
             )

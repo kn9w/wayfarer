@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.core.repo.ACTIVITY_WINDOW_CHOICES
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.core.repo.Credential
@@ -96,6 +97,7 @@ fun SettingsScreen(controller: AppController) {
     }
 
     val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
+    val headerStyle by controller.headerStyle.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = { Text("Settings", style = MaterialTheme.typography.titleLarge) })
@@ -203,6 +205,23 @@ fun SettingsScreen(controller: AppController) {
                 // has been fetched, not from what exists.
                 "Judged only from posts Wayfarer has actually fetched — somebody publishing to relays you have " +
                     "not allowed will look quiet however often they write.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Text("Header", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (style in HeaderStyle.entries) {
+                    FilterChip(
+                        selected = style == headerStyle,
+                        onClick = { controller.setHeaderStyle(style) },
+                        label = { Text(style.name) },
+                    )
+                }
+            }
+            Text(
+                "Compact trades the words for a connection dot and bare counts, and gives the few pixels back " +
+                    "to what you came to read.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

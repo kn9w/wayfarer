@@ -16,6 +16,7 @@ import app.wayfarer.core.nostr.NostrCodec
 import app.wayfarer.core.nostr.RelayTransport
 import app.wayfarer.core.nostr.ReqFilter
 import app.wayfarer.core.outbox.OutboxRouter
+import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.util.Clock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +42,8 @@ class ThreadRepository(
     private val codec: NostrCodec,
     private val router: OutboxRouter,
     private val clock: Clock,
+    private val hints: RelayHintQueue? = null,
+    private val describe: (PubKey) -> String = { it.abbreviated() },
 ) {
     private val comments = MutableStateFlow<Map<EventId, Comment>>(emptyMap())
     private val replies = MutableStateFlow<Map<EventId, Note>>(emptyMap())
@@ -135,6 +138,14 @@ class ThreadRepository(
         relay: RelayUrl?,
     ): Boolean {
         if (!codec.verify(event)) return false
+
+        hints?.offer(
+            event.relayHints(),
+            DiscoveryReason(
+                DiscoverySource.EVENT_HINT,
+                "a reply by ${describe(event.pubKey)} in a conversation you opened pointed at it",
+            ),
+        )
 
         Comment.fromEvent(event, relay)?.let { incoming ->
             val existing = comments.value[incoming.id]

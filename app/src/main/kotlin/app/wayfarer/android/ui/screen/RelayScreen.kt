@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +80,17 @@ fun RelayScreen(controller: AppController) {
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(RelayFilter.All) }
     var opened by remember { mutableStateOf<RelayUrl?>(null) }
+
+    // Something elsewhere — a relay named on somebody's profile — asked for this
+    // relay's details. Consumed rather than observed, so going back and forward
+    // again does not re-open the sheet by itself.
+    val focus by controller.relayFocus.collectAsStateWithLifecycle()
+    LaunchedEffect(focus) {
+        focus?.let {
+            opened = it
+            controller.clearRelayFocus()
+        }
+    }
 
     val all = remember(state) { state.rows() }
     val shown =
@@ -643,15 +655,23 @@ private fun RelayInfoPanel(
     }
 }
 
+/**
+ * Why this relay is being asked about, as a sentence.
+ *
+ * The detail carries the specific — which person, which post — and the source
+ * says what kind of claim it is. Both matter: "somebody publishes here" is a
+ * different decision from "a stranger's post mentioned it", and the old wording
+ * blurred them into fragments that read the same.
+ */
 private fun DiscoveryReason.describe(): String {
-    val prefix =
-        when (source) {
-            DiscoverySource.BOOTSTRAP -> "suggested by Wayfarer"
-            DiscoverySource.USER_ENTERED -> "you asked for it"
-            DiscoverySource.OWN_RELAY_LIST -> "one of your own relays"
-            DiscoverySource.AUTHOR_RELAY_LIST -> "somebody you are reading posts here"
-            DiscoverySource.EVENT_HINT -> "a link pointed at it"
-            DiscoverySource.CONTACT_LIST -> "listed in your contacts"
-        }
-    return if (detail.isNullOrBlank()) prefix else "$prefix — $detail"
+    val detail = detail?.takeIf { it.isNotBlank() }
+    return when (source) {
+        DiscoverySource.BOOTSTRAP -> "Wayfarer ships with it as a starting point"
+        DiscoverySource.USER_ENTERED -> detail?.let { "You asked for it — $it" } ?: "You asked for it"
+        DiscoverySource.OWN_RELAY_LIST -> detail?.let { "Your own relay list says $it" } ?: "It is on your own relay list"
+        DiscoverySource.AUTHOR_RELAY_LIST ->
+            detail?.let { "$it, and you have read their posts" }
+                ?: "Somebody whose posts you read publishes here"
+        DiscoverySource.EVENT_HINT -> detail?.replaceFirstChar { it.uppercase() } ?: "Something you opened pointed at it"
+    }
 }

@@ -14,6 +14,7 @@ import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.repo.Credential
+import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.SignerFactory
 import app.wayfarer.core.store.KeyValueStore
 import app.wayfarer.core.testNormalizer
@@ -314,6 +315,136 @@ class AppControllerTest {
             // The subscription only carries what happens from now on, so resuming
             // has to fetch as well or everything posted while away is missing.
             assertTrue(transport.fetched.size > fetchesBefore, "resuming must also reload the backlog")
+        }
+
+    // ---- relay provenance and focus ---------------------------------------
+
+    @Test
+    fun `a relay hinted by a post you read becomes pending, attributed`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+            controller.onEnterForeground()
+            controller.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+
+            transport.emit(
+                app.wayfarer.core.nostr.ReceivedEvent(
+                    app.wayfarer.core.noteEvent(
+                        pubKey,
+                        "hi",
+                        createdAt = 500,
+                        idSeed = 77,
+                        tags = listOf(listOf("e", "11".repeat(32), "wss://hinted.example", "root")),
+                    ),
+                    RelayUrl("wss://open.example/"),
+                ),
+            )
+            runCurrent()
+            // Recorded on the batching tick, not inside the collector: a write
+            // there would stall every event queued behind it.
+            advanceTimeBy(3_000)
+            runCurrent()
+
+            val hinted = RelayUrl("wss://hinted.example/")
+            val reasons = controller.relays.state.value.pending.firstOrNull { it.url == hinted }?.reasons
+            assertTrue(reasons != null && reasons.isNotEmpty(), "the hinted relay must be queued for a decision")
+            assertTrue(
+                reasons.any { it.detail?.contains("you read") == true },
+                "and must say which post caused it, was: ${reasons.map { it.detail }}",
+            )
+        }
+
+    @Test
+    fun `absorbing an event with hints costs no relay round trip`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+            controller.onEnterForeground()
+            controller.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+            val before = transport.fetched.size
+
+            transport.emit(
+                app.wayfarer.core.nostr.ReceivedEvent(
+                    app.wayfarer.core.noteEvent(
+                        pubKey,
+                        "hi",
+                        createdAt = 500,
+                        idSeed = 78,
+                        tags = listOf(listOf("e", "11".repeat(32), "wss://hinted.example", "root")),
+                    ),
+                    RelayUrl("wss://open.example/"),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(before, transport.fetched.size, "harvesting must not reach the network from the collector")
+        }
+
+    @Test
+    fun `opening a relay nobody has mentioned still finds it something to show`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+            val stranger = RelayUrl("wss://never-heard-of.example/")
+
+            controller.openRelayDetail(stranger, because = "npub1abc says they can be found here")
+            runCurrent()
+
+            // Without the pending record the relay screen would find no row for
+            // it and close the sheet again, so the tap would look broken.
+            val pending = controller.relays.state.value.pending.firstOrNull { it.url == stranger }
+            assertTrue(pending != null, "an unknown relay must be recorded before it can be shown")
+            assertTrue(pending.reasons.any { it.detail?.contains("can be found here") == true })
+            assertEquals(stranger, controller.relayFocus.value)
+            assertEquals(Screen.Relays, controller.screen.value)
+
+            controller.clearRelayFocus()
+            assertNull(controller.relayFocus.value, "the focus is consumed, so back-then-forward does not reopen it")
+        }
+
+    @Test
+    fun `an already known relay is focused without being re-recorded`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+            controller.relays.add("wss://known.example", read = true, write = false)
+            runCurrent()
+            val known = RelayUrl("wss://known.example/")
+
+            controller.openRelayDetail(known, because = "somebody says so")
+            runCurrent()
+
+            assertEquals(known, controller.relayFocus.value)
+            assertTrue(controller.relays.state.value.pending.none { it.url == known }, "an allowed relay stays allowed")
+        }
+
+    // ---- header appearance -------------------------------------------------
+
+    @Test
+    fun `the header is standard until the user says otherwise`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+
+            assertEquals(HeaderStyle.Standard, controller.headerStyle.value)
+
+            controller.setHeaderStyle(HeaderStyle.Compact)
+            runCurrent()
+            assertEquals(HeaderStyle.Compact, controller.headerStyle.value)
         }
 
     // ---- how people are named ---------------------------------------------

@@ -24,6 +24,29 @@ data class NostrEvent(
 
     /** Every pubkey this event addresses — the p-tags that drive outbox fan-out. */
     fun mentionedPubKeys(): Set<PubKey> = tagValues("p").mapNotNullTo(mutableSetOf(), PubKey::parseOrNull)
+
+    /**
+     * Relay hints carried on this event's `e` and `p` tags.
+     *
+     * NIP-01 puts an optional relay URL at position 2 of a tag row — the place
+     * the author suggests looking for the event or person named at position 1.
+     * Nothing read it until now: [tagValues] returns position 1 by definition
+     * and the threading parsers step from 1 straight to the marker at 3, so
+     * every hint the app has ever received was dropped on the floor.
+     *
+     * Returned as raw strings. Turning one into a [RelayUrl] means normalising
+     * it, which is platform work this model deliberately has no access to.
+     */
+    fun relayHints(): List<String> =
+        tags
+            .asSequence()
+            .filter { it.size >= 3 && (it[0] == "e" || it[0] == "p") }
+            .map { it[2].trim() }
+            // A hint is optional, and an empty position 2 is how a client says
+            // "I have no suggestion" rather than a relay called "".
+            .filter { it.isNotEmpty() && (it.startsWith("wss://") || it.startsWith("ws://")) }
+            .distinct()
+            .toList()
 }
 
 /** An unsigned event, as handed to a signer. */

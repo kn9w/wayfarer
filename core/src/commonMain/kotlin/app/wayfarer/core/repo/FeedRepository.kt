@@ -3,6 +3,8 @@ package app.wayfarer.core.repo
 import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.NostrEvent
+import app.wayfarer.core.model.DiscoveryReason
+import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
@@ -11,6 +13,7 @@ import app.wayfarer.core.nostr.EventSigner
 import app.wayfarer.core.nostr.NostrCodec
 import app.wayfarer.core.nostr.RelayTransport
 import app.wayfarer.core.outbox.OutboxRouter
+import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.util.Clock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,11 +33,21 @@ class FeedRepository(
     private val router: OutboxRouter,
     private val relayLists: RelayListRepository,
     private val clock: Clock,
+    /** Names an author for the hint reasons above. See OutboxRouter's own. */
+    private val describe: (PubKey) -> String = { it.abbreviated() },
     /**
      * Long-form events arrive on the same REQ as text notes — one round trip
      * instead of two — and are handed straight over to their own store.
      */
     private val articles: ArticleRepository? = null,
+    /**
+     * Where relay hints found on incoming events are left.
+     *
+     * A queue rather than a directory write: absorb runs inside the
+     * subscription's collector, and a suspending, persisting write there would
+     * stall every event behind it.
+     */
+    private val hints: RelayHintQueue? = null,
 ) {
     private val notes = MutableStateFlow<Map<EventId, Note>>(emptyMap())
 
@@ -176,6 +189,10 @@ class FeedRepository(
         if (!codec.verify(event)) return null
 
         val incoming = Note.fromEvent(event, relay) ?: return null
+        hints?.offer(
+            event.relayHints(),
+            DiscoveryReason(DiscoverySource.EVENT_HINT, "a post by ${describe(incoming.author)} you read pointed at it"),
+        )
         val existing = notes.value[incoming.id]
         val merged = existing?.mergeSeenOn(incoming.seenOn) ?: incoming
         if (merged === existing) return existing

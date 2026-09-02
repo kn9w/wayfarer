@@ -45,7 +45,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController
@@ -100,12 +99,7 @@ fun HomeScreen(controller: AppController) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        ModeHeader(
-            mode = global.mode,
-            onMode = controller.global::setMode,
-            onFilter = { filtering = true },
-        )
-        SubjectRow(global, controller)
+        GlobalHeader(global, controller, onFilter = { filtering = true })
         HorizontalDivider()
 
         PullToRefreshBox(
@@ -125,155 +119,146 @@ fun HomeScreen(controller: AppController) {
 
 // ---- header -------------------------------------------------------------
 
-@Composable
-private fun ModeHeader(
-    mode: BrowseMode,
-    onMode: (BrowseMode) -> Unit,
-    onFilter: () -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-
-    ScreenHeader(
-        title = {
-            Box {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { open = true },
-                ) {
-                    Text(
-                        if (mode == BrowseMode.Follows) "Follows" else "Relay",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                    Icon(WayfarerIcons.DropDown, contentDescription = "Change what you are reading")
-                }
-                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Follows") },
-                        onClick = {
-                            open = false
-                            onMode(BrowseMode.Follows)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Relay") },
-                        onClick = {
-                            open = false
-                            onMode(BrowseMode.Relay)
-                        },
-                    )
-                }
-            }
-        },
-        actions = {
-            IconButton(onClick = onFilter) {
-                Icon(WayfarerIcons.Funnel, contentDescription = "Filter and order")
-            }
-        },
-    )
-}
-
 /**
- * What is on screen: a person, or a relay.
+ * Mode, subject and filter on one line.
  *
- * The relay is a picker because a relay is a thing you go to. The person is not
- * — you reach people by stepping through the rotation, which is what makes it a
- * rotation rather than a list you choose from.
+ * These were three stacked bars — the app header, a mode row, a subject row —
+ * costing about 145dp before a single post, roughly a quarter of a phone. The
+ * mode and what it is pointed at are one thought ("Follows · Alice"), so they
+ * are one control; the position moved down to the paging bar, which was already
+ * at the bottom and already about position.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SubjectRow(
+private fun GlobalHeader(
     global: GlobalState,
     controller: AppController,
+    onFilter: () -> Unit,
 ) {
+    var modeOpen by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
 
-    when (global.mode) {
-        BrowseMode.Follows -> {
-            val person = global.person
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { modeOpen = true },
             ) {
                 Text(
-                    text = person?.let { controller.displayName(it) } ?: "Nobody to read",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = if (person != null && controller.profileFor(person) == null) FontFamily.Monospace else null,
-
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    if (global.mode == BrowseMode.Follows) "Follows" else "Relay",
+                    style = MaterialTheme.typography.titleMedium,
                 )
-                if (person != null) {
-                    Text(
-                        global.position,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Icon(WayfarerIcons.DropDown, contentDescription = "Change what you are reading")
+            }
+            DropdownMenu(expanded = modeOpen, onDismissRequest = { modeOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Follows") },
+                    onClick = {
+                        modeOpen = false
+                        controller.global.setMode(BrowseMode.Follows)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Relay") },
+                    onClick = {
+                        modeOpen = false
+                        controller.global.setMode(BrowseMode.Relay)
+                    },
+                )
             }
         }
 
-        BrowseMode.Relay -> {
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = global.relays.isNotEmpty()) { picking = true }
-                        .padding(horizontal = PostHorizontalPadding, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    global.relay?.display() ?: "No relay allowed yet",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        global.position,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (global.relays.isNotEmpty()) {
-                        Icon(WayfarerIcons.DropDown, contentDescription = "Choose a relay")
-                    }
-                }
-            }
+        Text(
+            "·",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
 
-            if (picking) {
-                ModalBottomSheet(onDismissRequest = { picking = false }, sheetState = rememberModalBottomSheetState()) {
-                    Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
-                        Text(
-                            "Read from",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                        )
-                        for (url in global.relays) {
-                            Text(
-                                url.display(),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontFamily = FontFamily.Monospace,
-                                color =
-                                    if (url == global.relay) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    },
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            picking = false
-                                            controller.global.selectRelay(url)
-                                        }.padding(horizontal = 20.dp, vertical = 14.dp),
-                            )
-                        }
-                    }
-                }
+        // In Relay mode the subject is a place you choose; in Follows mode the
+        // arrows are what move between people, so it is a label there.
+        Subject(global, controller, onPick = { picking = true }, modifier = Modifier.weight(1f))
+
+        IconButton(onClick = onFilter, modifier = Modifier.size(36.dp)) {
+            Icon(WayfarerIcons.Funnel, contentDescription = "Filter and order", modifier = Modifier.size(20.dp))
+        }
+    }
+
+    if (picking) {
+        RelayPicker(global, controller, onDismiss = { picking = false })
+    }
+}
+
+@Composable
+private fun Subject(
+    global: GlobalState,
+    controller: AppController,
+    onPick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val relayMode = global.mode == BrowseMode.Relay
+    val person = global.person
+    val label =
+        when {
+            relayMode -> global.relay?.display() ?: "No relay allowed yet"
+            person != null -> controller.displayName(person)
+            else -> "Nobody to read"
+        }
+
+    Row(
+        modifier = if (relayMode && global.relays.isNotEmpty()) modifier.clickable(onClick = onPick) else modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            fontFamily = if (relayMode) FontFamily.Monospace else null,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (relayMode && global.relays.isNotEmpty()) {
+            Icon(WayfarerIcons.DropDown, contentDescription = "Choose a relay")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RelayPicker(
+    global: GlobalState,
+    controller: AppController,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 28.dp)) {
+            Text(
+                "Read from",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            for (url in global.relays) {
+                Text(
+                    url.display(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontFamily = FontFamily.Monospace,
+                    color =
+                        if (url == global.relay) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onDismiss()
+                                controller.global.selectRelay(url)
+                            }.padding(horizontal = 20.dp, vertical = 14.dp),
+                )
             }
         }
     }
@@ -426,9 +411,13 @@ fun PagingBar(controller: AppController) {
             )
         }
         Text(
-            when (global.mode) {
-                BrowseMode.Follows -> "the people you follow"
-                BrowseMode.Relay -> "posts on this relay"
+            // The position moved down here from the subject row: this bar is
+            // what steps through the set, so it is where "where am I" belongs.
+            global.position.ifBlank {
+                when (global.mode) {
+                    BrowseMode.Follows -> "the people you follow"
+                    BrowseMode.Relay -> "posts on this relay"
+                }
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
