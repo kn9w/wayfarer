@@ -552,6 +552,56 @@ class AppControllerTest {
             assertEquals(Screen.Profile(pubKey), controller.screen.value)
         }
 
+    // ---- logging out ------------------------------------------------------
+
+    @Test
+    fun `logging out closes the sockets and shows the front door`() =
+        runTest {
+            val controller = browsingGuest(TestScope(testScheduler))
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            assertTrue(transport.startCount > 0, "the session under test has to have opened something")
+
+            controller.logout()
+            runCurrent()
+
+            // All three, because "logged out" that leaves the relays connected is
+            // an account forgotten while the connections it opened carry on.
+            assertNull(controller.account.value)
+            assertEquals(OnboardingStep.Start, controller.onboarding.value)
+            assertEquals(1, transport.stopCount, "logging out has to stop talking to relays")
+        }
+
+    @Test
+    fun `logging out does not wait for whatever the app was doing`() =
+        runTest {
+            val controller = browsingGuest(TestScope(testScheduler))
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            // A load in flight is exactly when somebody reaches for Log out, and
+            // it used to be the moment the button went dead: it was disabled on
+            // the busy flag, and the screen change waited on the same coroutine
+            // the flag belonged to.
+            transport.holdFetches()
+            controller.refreshFeed()
+            runCurrent()
+
+            controller.logout()
+
+            // No runCurrent: the user is off the app on the same frame as the press.
+            assertEquals(OnboardingStep.Start, controller.onboarding.value)
+
+            transport.releaseFetches()
+            runCurrent()
+        }
+
     // ---- what the user is told is loading ---------------------------------
 
     @Test
@@ -577,6 +627,34 @@ class AppControllerTest {
             // progress bar they learn to ignore.
             assertFalse(controller.busy.value, "a background reload must never raise the busy indicator")
             assertFalse(controller.refreshing.value)
+
+            transport.releaseFetches()
+            runCurrent()
+        }
+
+    @Test
+    fun `signing in does not hold the progress bar while relays answer`() =
+        runTest {
+            val controller = AppController(wayfarer(), TestScope(testScheduler))
+            runCurrent()
+            controller.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+
+            // Held, so what a new account's own relays are doing is genuinely in
+            // flight while the flag is looked at.
+            transport.holdFetches()
+            controller.createAccount()
+            runCurrent()
+
+            // The key exists and is on screen, which is what the press asked for.
+            // What this account has out there is somebody else's servers taking
+            // their time — and while that was held under the busy flag, every
+            // onboarding button was disabled and Settings would not log out.
+            assertTrue(controller.onboarding.value is OnboardingStep.Backup)
+            assertFalse(
+                controller.busy.value,
+                "the bar must not stay up for relays answering after the account exists",
+            )
 
             transport.releaseFetches()
             runCurrent()

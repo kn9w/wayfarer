@@ -33,6 +33,15 @@ import androidx.compose.ui.unit.sp
 // only the temperature moved. Chroma runs a little higher in dark than the light
 // theme's equivalents because a dark neutral needs more of it to read as tinted
 // at all.
+//
+// Moss is the app's accent, and that is a meaning rather than a taste: it is the
+// colour of everything that becomes public — see publicAccent below — and the
+// primary role is where Material spends a colour on buttons, switches, progress
+// and selection, so the two have to be the same or the app teaches one pair and
+// draws another. Compass, which used to be primary, keeps a role as tertiary for
+// the rare accent that is neither public nor local.
+private val Moss = Color(0xFF4E644B)
+private val MossLight = Color(0xFFB5CDB0)
 private val Compass = Color(0xFF3E6B8A)
 private val CompassLight = Color(0xFF9CC4DE)
 private val Trail = Color(0xFF7A5C3E)
@@ -41,23 +50,20 @@ private val Parchment = Color(0xFFFBF9F4)
 
 private val LightColors =
     lightColorScheme(
-        primary = Compass,
+        primary = Moss,
         onPrimary = Color(0xFFFFFFFF),
-        primaryContainer = Color(0xFFC9E6FF),
-        onPrimaryContainer = Color(0xFF001E2E),
-        inversePrimary = Color(0xFFA0CCEE),
+        primaryContainer = Color(0xFFD0E9CC),
+        onPrimaryContainer = Color(0xFF0D2007),
+        inversePrimary = MossLight,
         // Trail, which the app spends on everything that stays on this phone.
         secondary = Trail,
         onSecondary = Color(0xFFFFFFFF),
         secondaryContainer = Color(0xFFF9DEC6),
         onSecondaryContainer = Color(0xFF291800),
-        // Moss, which the app spends on everything that becomes public — see
-        // publicAccent below. Distinct from Compass so it never reads as a
-        // primary action.
-        tertiary = Color(0xFF4E644B),
+        tertiary = Compass,
         onTertiary = Color(0xFFFFFFFF),
-        tertiaryContainer = Color(0xFFD0E9CC),
-        onTertiaryContainer = Color(0xFF0D2007),
+        tertiaryContainer = Color(0xFFC9E6FF),
+        onTertiaryContainer = Color(0xFF001E2E),
         error = Color(0xFFB4271F),
         onError = Color(0xFFFFFFFF),
         errorContainer = Color(0xFFFFDAD3),
@@ -68,7 +74,7 @@ private val LightColors =
         onSurface = Color(0xFF1D1B17),
         surfaceVariant = Color(0xFFE7E2D5),
         onSurfaceVariant = Color(0xFF4A473C),
-        surfaceTint = Compass,
+        surfaceTint = Moss,
         inverseSurface = Color(0xFF32302C),
         inverseOnSurface = Color(0xFFF3F1EB),
         outline = Color(0xFF7B776B),
@@ -85,19 +91,19 @@ private val LightColors =
 
 private val DarkColors =
     darkColorScheme(
-        primary = CompassLight,
-        onPrimary = Color(0xFF00344D),
-        primaryContainer = Color(0xFF184B68),
-        onPrimaryContainer = Color(0xFFC9E6FF),
-        inversePrimary = Color(0xFF356381),
+        primary = MossLight,
+        onPrimary = Color(0xFF21351F),
+        primaryContainer = Color(0xFF374C34),
+        onPrimaryContainer = Color(0xFFD0E9CC),
+        inversePrimary = Moss,
         secondary = TrailLight,
         onSecondary = Color(0xFF3F2D1B),
         secondaryContainer = Color(0xFF574330),
         onSecondaryContainer = Color(0xFFF9DEC6),
-        tertiary = Color(0xFFB5CDB0),
-        onTertiary = Color(0xFF21351F),
-        tertiaryContainer = Color(0xFF374C34),
-        onTertiaryContainer = Color(0xFFD0E9CC),
+        tertiary = CompassLight,
+        onTertiary = Color(0xFF00344D),
+        tertiaryContainer = Color(0xFF184B68),
+        onTertiaryContainer = Color(0xFFC9E6FF),
         error = Color(0xFFFFB4A5),
         onError = Color(0xFF690000),
         errorContainer = Color(0xFF93000B),
@@ -108,7 +114,7 @@ private val DarkColors =
         onSurface = Color(0xFFE6E2DC),
         surfaceVariant = Color(0xFF4D463B),
         onSurfaceVariant = Color(0xFFCDC5B9),
-        surfaceTint = CompassLight,
+        surfaceTint = MossLight,
         inverseSurface = Color(0xFFE6E2DC),
         inverseOnSurface = Color(0xFF33302A),
         outline = Color(0xFF978F83),
@@ -161,18 +167,23 @@ fun WayfarerTheme(
  * Now it is Moss for public and Trail for local, in both themes, everywhere: two
  * accents that carry a meaning rather than a mood.
  *
+ * Moss *is* the primary role rather than a colour beside it. Material spends
+ * primary on every default button, switch, selection and progress bar, so a
+ * public accent that was not primary would have been contradicted by every
+ * control nobody had got round to tinting.
+ *
  * Colour is never the only signal — the wording still says what happens, and the
  * relay and picture screens keep their own glyphs — because this pair is a
  * green and a brown, which is exactly the pair a red-green colour-blind reader
  * separates worst.
  */
-val ColorScheme.publicAccent: Color get() = tertiary
+val ColorScheme.publicAccent: Color get() = primary
 
-val ColorScheme.onPublicAccent: Color get() = onTertiary
+val ColorScheme.onPublicAccent: Color get() = onPrimary
 
-val ColorScheme.publicContainer: Color get() = tertiaryContainer
+val ColorScheme.publicContainer: Color get() = primaryContainer
 
-val ColorScheme.onPublicContainer: Color get() = onTertiaryContainer
+val ColorScheme.onPublicContainer: Color get() = onPrimaryContainer
 
 val ColorScheme.localAccent: Color get() = secondary
 

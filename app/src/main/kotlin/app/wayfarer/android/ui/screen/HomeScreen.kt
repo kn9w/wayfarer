@@ -1,6 +1,7 @@
 package app.wayfarer.android.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,12 +13,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,8 +63,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.PostPictures
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.localAccent
 import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.ui.theme.publicButtonColors
+import app.wayfarer.android.ui.theme.publicOutlinedButtonColors
 import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.BrowseMode
@@ -72,10 +78,12 @@ import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfNote
 import app.wayfarer.core.model.EventId
+import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.model.ThreadRef
+import app.wayfarer.core.repo.ThreadEntry
 import app.wayfarer.core.repo.ThreadNode
 import app.wayfarer.core.repo.threadTree
 
@@ -356,8 +364,10 @@ private fun RelayPicker(
                     style = MaterialTheme.typography.bodyLarge,
                     fontFamily = FontFamily.Monospace,
                     color =
+                        // Trail: which relay you are reading is a choice from
+                        // this phone's own list, and nothing about it is public.
                         if (url == global.relay) {
-                            MaterialTheme.colorScheme.primary
+                            MaterialTheme.colorScheme.localAccent
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         },
@@ -720,12 +730,39 @@ internal fun ThreadSection(
     val fetchedRoots by controller.threadRoots.collectAsStateWithLifecycle()
     val state = threads[root] ?: ThreadState()
     val expanded = root in expandedRoots
-    var draft by remember(root) { mutableStateOf("") }
 
     // Whichever store it is in, if it is in one at all. A root fetched with the
     // thread lands in threadRoots; one the feed already had is in allNotes.
     val rootId = (root as? ThreadRef.Event)?.id
     val rootNote = rootId?.let { heldNotes[it] ?: fetchedRoots[it] }
+
+    // Null until somebody presses a Reply. Which one they pressed is the whole
+    // of what the old composer could not say.
+    var replying by remember(root) { mutableStateOf<ReplyTarget?>(null) }
+
+    replying?.let { target ->
+        ReplySheet(
+            target = target,
+            posting = state.posting,
+            onDismiss = { replying = null },
+            onSend = { text ->
+                controller.threads.reply(
+                    // The root is what the thread is about and never moves; the
+                    // parent is what this reply answers. NIP-22 keeps both, so a
+                    // reply to a reply can be refetched with its conversation
+                    // and still sit under the right thing.
+                    root = root,
+                    rootKind = rootKind,
+                    rootAuthor = rootAuthor,
+                    parent = target.ref,
+                    parentKind = target.kind,
+                    parentAuthor = target.author,
+                    content = text,
+                )
+                replying = null
+            },
+        )
+    }
 
     // This used to return early on a loaded-and-empty thread, which took the
     // reply composer with it: open a note with no replies, close it again, and
@@ -779,30 +816,39 @@ internal fun ThreadSection(
             )
         }
         for (node in nodes) {
-            ThreadEntryRow(node, collapsed = node.entry.id in collapsed, controller = controller)
+            ThreadEntryRow(
+                node = node,
+                collapsed = node.entry.id in collapsed,
+                controller = controller,
+                onReply = { entry ->
+                    replying =
+                        ReplyTarget(
+                            ref = ThreadRef.Event(entry.id),
+                            kind = if (entry.isComment) EventKind.COMMENT.toString() else EventKind.TEXT_NOTE.toString(),
+                            author = entry.author,
+                            toName = controller.displayName(entry.author),
+                            quote = entry.content,
+                        )
+                },
+            )
         }
     }
 
-    ReplyComposer(
-        draft = draft,
-        onDraft = { draft = it },
-        posting = state.posting,
-        onSend = {
-            // Root and parent are the same here: this replies to the post, not
-            // to another reply. Deeper in a thread they diverge, which is the
-            // pair NIP-22 keeps so a conversation can be refetched by its root.
-            controller.threads.reply(
-                root = root,
-                rootKind = rootKind,
-                rootAuthor = rootAuthor,
-                parent = root,
-                parentKind = rootKind,
-                parentAuthor = rootAuthor,
-                content = draft,
-            )
-            draft = ""
+    // The way to answer the post itself, said as plainly as the per-reply ones.
+    OutlinedButton(
+        onClick = {
+            replying =
+                ReplyTarget(
+                    ref = root,
+                    kind = rootKind,
+                    author = rootAuthor,
+                    toName = controller.displayName(rootAuthor),
+                    quote = rootNote?.content.orEmpty(),
+                )
         },
-    )
+        colors = publicOutlinedButtonColors(),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+    ) { Text("Reply to ${controller.displayName(rootAuthor)}") }
 }
 
 /**
@@ -886,6 +932,7 @@ private fun ThreadEntryRow(
     node: ThreadNode,
     collapsed: Boolean,
     controller: AppController,
+    onReply: (ThreadEntry) -> Unit,
 ) {
     val entry = node.entry
     val foldable = node.descendants > 0
@@ -924,34 +971,113 @@ private fun ThreadEntryRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        // Answering *this* reply, which the one composer at the foot of the
+        // thread could never do — it always replied to the root.
+        Text(
+            "Reply",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.publicAccent,
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onReply(entry) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+        )
     }
 }
 
-/** The box a reply is written in. Shared by note threads and article comments. */
+/**
+ * What a reply is aimed at.
+ *
+ * [ref], [kind] and [author] are what the event will carry; [toName] and [quote]
+ * are what the person writing it sees. Both halves travel together because the
+ * bug this exists to fix was them coming apart: the composer was one unlabelled
+ * field at the foot of a thread that always answered the *root*, whichever reply
+ * you had just read, so what you were about to answer was something you had to
+ * infer from a box that said nothing.
+ */
+internal data class ReplyTarget(
+    val ref: ThreadRef,
+    val kind: String,
+    val author: PubKey?,
+    val toName: String,
+    val quote: String,
+)
+
+/**
+ * Writing a reply, with the thing being replied to at the top of it.
+ *
+ * A sheet rather than an inline field: it names its target, quotes it, and has
+ * room to write in — and, being modal, it cannot be left ambiguous by scrolling
+ * away from whatever it was under.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ReplyComposer(
-    draft: String,
-    onDraft: (String) -> Unit,
+internal fun ReplySheet(
+    target: ReplyTarget,
     posting: Boolean,
-    onSend: () -> Unit,
+    onDismiss: () -> Unit,
+    onSend: (String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraft,
-            label = { Text("Reply") },
-            modifier = Modifier.weight(1f),
-        )
-        // Moss: a reply is a signed note that goes to relays.
-        Button(
-            onClick = onSend,
-            enabled = !posting && draft.isNotBlank(),
-            colors = publicButtonColors(),
-        ) { Text("Send") }
+    var draft by remember(target.ref, target.quote) { mutableStateOf("") }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                // The field is the point of the sheet, so it stays above the
+                // keyboard rather than under it.
+                .imePadding(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Replying to ${target.toName}", style = MaterialTheme.typography.titleMedium)
+
+            // Four lines of what is being answered. Not the whole of it: this
+            // is here to say which post, and a long one would push the field
+            // somebody opened the sheet to type in off the screen.
+            if (target.quote.isNotBlank()) {
+                Text(
+                    target.quote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .padding(10.dp),
+                )
+            }
+
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                label = { Text("Your reply") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { onSend(draft) },
+                    enabled = !posting && draft.isNotBlank(),
+                    colors = publicButtonColors(),
+                ) { Text(if (posting) "Sending…" else "Send") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+
+            Text(
+                "A reply is a signed public note. It goes to your write relays and to " +
+                    "${target.toName}'s read relays, so it reaches them.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

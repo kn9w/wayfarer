@@ -147,11 +147,16 @@ both in the same blue, so the distinction it is built around was the one thing y
 paragraph to learn.
 
 **Moss green is public. Trail brown is local.** Following publicly, replying, publishing a note, an
-article, a profile, a relay list or a payment address are green. Allowing a relay, allowing a
-picture server, following on this phone, and the connection dot are brown. The two tabs are the same
-pair, because Global and Local *are* the distinction. They live in `Theme.kt` as `publicAccent` and
-`localAccent` — aliases over the palette's tertiary and secondary — so a screen names the meaning
-rather than the colour.
+article, a profile, a relay list or a payment address are green — so is the `+` that starts one, and
+so is the progress bar, on a brown track. Allowing a relay, allowing a picture server, following on
+this phone, logging out, and the connection dot are brown. The two tabs are the same pair, because
+Global and Local *are* the distinction. They live in `Theme.kt` as `publicAccent` and `localAccent`
+so a screen names the meaning rather than the colour.
+
+Moss *is* Material's `primary` rather than a colour beside it. Primary is what the library spends on
+every default button, switch, selection and progress bar, so a public accent that was not primary
+would have been contradicted by every control nobody had got round to tinting by hand. Compass blue,
+which used to be primary, keeps `tertiary` for the rare accent that is neither public nor local.
 
 Colour is never the only signal. The wording still says what happens, the relay and picture screens
 keep their glyphs, and the coverage badge on a profile carries a tick, a half-tick or a cross —
@@ -174,7 +179,7 @@ because green against brown is precisely the pair a red-green colour-blind reade
 |---|---|---|
 | [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified before it is stored — notes, articles and thread comments, and equally the kinds that steer the app: profiles (0), follow lists (3), relay lists (10002) and payment targets (10133). |
 | [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. Verified before use. |
-| [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. A conversation is read by its root: replies of both conventions, plus the post they answer, fetched by id so a thread opened from a reply has a beginning. |
+| [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. A conversation is read by its root: replies of both conventions, plus the post they answer, fetched by id so a thread opened from a reply has a beginning. Every reply in it can be replied to, and what is being answered is named and quoted in the composer rather than left to be inferred. |
 | [11](https://github.com/nostr-protocol/nips/blob/master/11.md) | Relay information | Fetched on explicit request; shows supported NIPs, software, auth/payment requirements, posting policy. |
 | [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode **with its relay hints kept**, `note` encode. Hints are offered for approval, never used on the strength of the link alone. |
 | [21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URIs | Accepted wherever a key is parsed, and when scanning notes for mentions. Written, too: "Copy event id" puts `nostr:note1…` on the clipboard rather than bare hex, because that is the form another client can resolve. |

@@ -2,6 +2,7 @@ package app.wayfarer.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,11 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -43,6 +41,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.onPublicAccent
 import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.ui.screen.ComposeNoteScreen
 import app.wayfarer.android.ui.screen.EditArticleScreen
@@ -217,7 +217,14 @@ fun WayfarerApp(
             // Only where there is a feed to add to. On the relay screen or a
             // profile it would be a button with no relationship to the page.
             if (screen is Screen.Home) {
-                FloatingActionButton(onClick = { composing = true }) {
+                FloatingActionButton(
+                    onClick = { composing = true },
+                    // Moss, like every other button that ends in a signed event
+                    // on somebody else's server. This is the most public one in
+                    // the app, so it is the last place to leave a default.
+                    containerColor = MaterialTheme.colorScheme.publicAccent,
+                    contentColor = MaterialTheme.colorScheme.onPublicAccent,
+                ) {
                     Icon(WayfarerIcons.Add, contentDescription = "Write something")
                 }
             }
@@ -250,7 +257,7 @@ fun WayfarerApp(
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (busy) WayfarerProgressBar(Modifier.fillMaxWidth())
 
             message?.let {
                 MessageBanner(it, onDismiss = controller::dismissMessage)
@@ -288,24 +295,60 @@ private fun ComposeChooser(
     onArticle: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState()) {
-        Column(Modifier.padding(bottom = 24.dp)) {
-            Text(
-                "Write something",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Write something", style = MaterialTheme.typography.titleMedium)
+            // Two outlined choices on the sheet's own ground, rather than
+            // Material's ListItem — which paints a container of its own, so the
+            // sheet had a second grey panel inside it whose only job was to sit
+            // behind two lines of text and a divider.
+            ComposeOption(
+                title = "Note",
+                detail = "A short post. Goes out to your write relays.",
+                onClick = onNote,
             )
-            ListItem(
-                headlineContent = { Text("Note") },
-                supportingContent = { Text("A short post. Goes out to your write relays.") },
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onNote),
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Article") },
-                supportingContent = { Text("Long-form, with a title, and editable after publishing.") },
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onArticle),
+            ComposeOption(
+                title = "Article",
+                detail = "Long-form, with a title, and editable after publishing.",
+                onClick = onArticle,
             )
         }
+    }
+}
+
+/** One thing the `+` can make: a name, a line about it, and the whole row taps. */
+@Composable
+private fun ComposeOption(
+    title: String,
+    detail: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            WayfarerIcons.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.publicAccent,
+        )
     }
 }
 
@@ -383,16 +426,16 @@ private fun AppHeader(
             // decision — which servers may this app talk to — and these two
             // lists are the only things in the app that answer it.
             //
-            // This one carries a count where the relay icon does not: the line
+            // This one carries a mark where the relay icon does not: the line
             // to the left already says how many relays are waiting, and nothing
-            // anywhere says how many picture servers are. Now that the queue
-            // fills itself as you read, a pill is the only thing standing
-            // between "some hosts accumulated" and nobody ever finding out.
+            // anywhere says that picture servers are. Now that the queue fills
+            // itself as you read, the dot is the only thing standing between
+            // "some hosts accumulated" and nobody ever finding out.
             Box(contentAlignment = Alignment.TopEnd) {
                 IconButton(onClick = onMedia, modifier = Modifier.size(36.dp)) {
                     Icon(WayfarerIcons.Image, contentDescription = "Pictures")
                 }
-                WaitingPill(mediaWaiting)
+                WaitingDot(mediaWaiting > 0)
             }
 
             // No count on the icon: the line to its left already says how many
@@ -476,24 +519,26 @@ private fun Tab(
 }
 
 /**
- * How many picture servers are waiting, as a small pill on the icon.
+ * That picture servers are waiting, as a dot on the icon.
  *
- * Absent at zero rather than showing a nought: with nothing queued there is
- * nothing to decide, and a permanent badge reading 0 is a notification about the
- * absence of news.
+ * A dot rather than a count. The number was never the thing to act on — nobody
+ * decides differently about three servers than about seven — and printing it in
+ * a bar that is otherwise all numbers made a notification read as one more
+ * statistic. Absent at zero, because a permanent badge is a notification about
+ * the absence of news.
  */
 @Composable
-private fun WaitingPill(count: Int) {
-    if (count <= 0) return
-    Text(
-        if (count > 99) "99+" else "$count",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onError,
-        maxLines = 1,
-        modifier =
-            Modifier
-                .background(MaterialTheme.colorScheme.error, RoundedCornerShape(8.dp))
-                .padding(horizontal = 5.dp, vertical = 1.dp),
+private fun WaitingDot(waiting: Boolean) {
+    if (!waiting) return
+    Box(
+        Modifier
+            .padding(top = 4.dp, end = 4.dp)
+            .size(9.dp)
+            // Ringed in the bar's own colour, so at any density the dot reads as
+            // sitting on the icon rather than as part of it.
+            .background(MaterialTheme.colorScheme.surface, CircleShape)
+            .padding(1.5.dp)
+            .background(MaterialTheme.colorScheme.localAccent, CircleShape),
     )
 }
 
@@ -519,7 +564,10 @@ private fun ConnectionDot(live: Boolean) {
 fun LoadingScreen(label: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            CircularProgressIndicator()
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.publicAccent,
+                trackColor = MaterialTheme.colorScheme.localAccent.copy(alpha = 0.35f),
+            )
             Text(label, style = MaterialTheme.typography.bodyMedium)
         }
     }

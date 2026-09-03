@@ -32,6 +32,7 @@ import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.core.repo.ACTIVITY_WINDOW_CHOICES
 import app.wayfarer.core.repo.HeaderStyle
+import app.wayfarer.android.ui.theme.localButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.core.repo.Credential
@@ -93,10 +94,15 @@ fun SettingsScreen(controller: AppController) {
                 )
             },
             confirmButton = {
-                Button(onClick = {
-                    confirmingLogout = false
-                    controller.logout()
-                }) { Text("Log out") }
+                // Trail: logging out changes this phone and tells no relay
+                // anything — the key is erased here, not withdrawn from anywhere.
+                Button(
+                    onClick = {
+                        confirmingLogout = false
+                        controller.logout()
+                    },
+                    colors = localButtonColors(),
+                ) { Text("Log out") }
             },
             dismissButton = { TextButton(onClick = { confirmingLogout = false }) { Text("Cancel") } },
         )
@@ -245,7 +251,10 @@ fun SettingsScreen(controller: AppController) {
 
             HorizontalDivider()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { confirmingLogout = true }, enabled = !busy) { Text("Log out") }
+                // Never disabled. This is the control somebody reaches for when
+                // they want the app to stop, and gating it on the progress bar
+                // meant it went dead exactly while something was happening.
+                OutlinedButton(onClick = { confirmingLogout = true }) { Text("Log out") }
             }
         }
     }

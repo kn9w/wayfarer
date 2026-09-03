@@ -250,7 +250,13 @@ class AppController(
         // Restoring reads the keystore and then talks to relays, either of which
         // can fail. Without this the failure disappears into the SupervisorJob and
         // the user is left on a blank signed-out screen with no explanation.
-        run {
+        //
+        // Quiet, because none of it was asked for. Reading the keystore decides
+        // which screen opens and takes a moment; everything after it is relays
+        // answering in their own time, and holding the progress bar — and with
+        // it every button the bar disables — until they do is how the first
+        // screen of the app came to be a screen you had to wait out.
+        quietly {
             val restored = core.accounts.restore()
             when {
                 restored != null -> onSignedIn(restored)
@@ -495,8 +501,11 @@ class AppController(
                 openProfileNow(purpose.pubKey)
             }
             is RelayPurpose.FindAccount -> {
-                core.accounts.account.value?.let { onSignedIn(it) }
+                // The relays are approved, so the app can open; what it finds
+                // about this account follows on its own. Same split as
+                // afterSignIn, and for the same reason.
                 completeOnboarding()
+                core.accounts.account.value?.let { account -> quietly { onSignedIn(account) } }
             }
             RelayPurpose.Browse -> {
                 completeOnboarding()
@@ -533,7 +542,13 @@ class AppController(
         run {
             val (account, nsec) = core.accounts.createAccount()
             onboardingState.value = OnboardingStep.Backup(nsec)
-            onSignedIn(account)
+            // Not awaited: the account exists and the key is on screen, which is
+            // what the press asked for. Loading what this account has on the
+            // network is somebody else's servers taking their time, and it used
+            // to hold the progress bar through the backup screen and on into
+            // "Where should we start?", where it looked like the question itself
+            // was still loading.
+            quietly { onSignedIn(account) }
         }
 
     fun login(input: String) =
@@ -570,24 +585,55 @@ class AppController(
             onboardingState.value = proposeDefaults(RelayPurpose.FindAccount(account.pubKey))
             return
         }
-        onSignedIn(account)
+        // The app opens now; what this account has out there arrives when it
+        // arrives. See createAccount for why that is not held under the bar.
         completeOnboarding()
+        quietly { onSignedIn(account) }
     }
 
-    fun logout() =
-        run {
+    /**
+     * Ends the session: nothing signed in, nothing connected, back to the front
+     * door.
+     *
+     * Deliberately not wrapped in [run]. Logging out was disabled whenever the
+     * app happened to be loading something, which is exactly backwards — the one
+     * control a person reaches for when they want the app to stop was the one
+     * the app switched off while it was busy. It also left every socket open and
+     * the feed subscription running under an onboarding screen, so "logged out"
+     * meant the account was forgotten while the connections it opened carried on.
+     *
+     * The order matters: the network stops first, then what is on screen, and
+     * only then the stored state. Nothing here suspends before the user is off
+     * the app, so the screen changes on the same frame as the press.
+     */
+    fun logout() {
+        // Silence the network before anything else. restartStream refuses to
+        // reopen while onboarding is up, so this is the whole of it.
+        streamJob?.cancel()
+        streamJob = null
+        if (transportStarted) {
+            transportStarted = false
+            core.transport.stop()
+        }
+
+        feedState.value = FeedState()
+        viewedProfileState.value = null
+        revealedKeyState.value = null
+        relayListPromptState.value = false
+        exhaustedAuthorsState.value = emptySet()
+        pendingProfiles.value = emptySet()
+        threads.clear()
+        goToRoot(Screen.Home)
+        onboardingState.value = OnboardingStep.Start
+
+        quietly {
             core.accounts.logout()
             core.contacts.clear()
             // Forgotten, not deleted: the list is keyed by the account that owns
             // it and comes back when they sign in again, like their relay grants.
             core.localFollows.clear()
-            feedState.value = FeedState()
-            revealedKeyState.value = null
-            relayListPromptState.value = false
-            threads.clear()
-            goToRoot(Screen.Home)
-            onboardingState.value = OnboardingStep.Start
         }
+    }
 
     /**
      * Puts the account's nsec on screen, after Android has confirmed the device
@@ -1539,6 +1585,27 @@ class AppController(
                 messageState.value = UserMessage.Error(failure.message ?: failure::class.simpleName ?: "Something failed")
             } finally {
                 busyState.value = false
+            }
+        }
+    }
+
+    /**
+     * The same, without the progress bar.
+     *
+     * [busyState] disables buttons — every onboarding step, and Log out — so it
+     * has to mean "the thing you just pressed is still happening" and nothing
+     * else. Work that follows a press but outlives the answer to it belongs
+     * here: fetching a newly signed-in account's profile, follows and feed takes
+     * as long as somebody else's relays take, and while it ran the introduction
+     * sat under a progress bar with its buttons dead, and Settings would not let
+     * you log out.
+     */
+    private fun quietly(block: suspend () -> Unit) {
+        scope.launch {
+            try {
+                block()
+            } catch (failure: Throwable) {
+                messageState.value = UserMessage.Error(failure.message ?: failure::class.simpleName ?: "Something failed")
             }
         }
     }

@@ -15,7 +15,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.MessageBanner
+import app.wayfarer.android.ui.WayfarerProgressBar
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Introduction
 import app.wayfarer.android.viewmodel.OnboardingStep
@@ -55,7 +55,7 @@ fun OnboardingSurface(
     val message by controller.message.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (busy) WayfarerProgressBar(Modifier.fillMaxWidth())
         message?.let { MessageBanner(it, controller::dismissMessage) }
 
         when (step) {
@@ -106,19 +106,28 @@ private fun StartScreen(
         HorizontalDivider()
         Text("Already have an account?", style = MaterialTheme.typography.titleSmall)
 
-        if (controller.externalSignerAvailable) {
-            OutlinedButton(
-                onClick = controller::loginWithExternalSigner,
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Use a signer app")
-            }
-            Text(
-                "Your key stays in that app (NIP-55). Wayfarer never sees it, and you approve every signature there.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+        // Always shown, and disabled when there is nothing to talk to. It used
+        // to be hidden outright on a phone with no signer app installed, which
+        // is the majority of phones — so the safest way to log in was invisible
+        // to everybody who had not already found it, and there was nothing on
+        // screen to say it existed or what would make it appear.
+        val signer = controller.externalSignerAvailable
+        OutlinedButton(
+            onClick = controller::loginWithExternalSigner,
+            enabled = !busy && signer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Use a signer app")
         }
+        Text(
+            if (signer) {
+                "Your key stays in that app (NIP-55). Wayfarer never sees it, and you approve every signature there."
+            } else {
+                "Greyed out because no signer app was found on this phone. A signer (NIP-55) holds your key and " +
+                    "approves each signature, so Wayfarer never sees it — install one and it will appear here."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
 
         OutlinedTextField(
             value = key,

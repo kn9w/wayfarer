@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +30,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.wayfarer.android.platform.QrRender
+import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.viewmodel.UserMessage
 import app.wayfarer.core.repo.PublishReport
 
@@ -54,6 +57,23 @@ fun ScreenHeader(
         Row(verticalAlignment = Alignment.CenterVertically, content = title)
         Row(verticalAlignment = Alignment.CenterVertically, content = actions)
     }
+}
+
+/**
+ * The one progress bar in the app, in the app's own two colours.
+ *
+ * Material draws an indeterminate bar in primary on a `surfaceVariant` track,
+ * which is a green line on a grey one. Moss on Trail instead: the two colours
+ * everything else is sorted by, and no third neutral introduced for the one
+ * control that reports the app talking to somebody.
+ */
+@Composable
+fun WayfarerProgressBar(modifier: Modifier = Modifier) {
+    LinearProgressIndicator(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.publicAccent,
+        trackColor = MaterialTheme.colorScheme.localAccent.copy(alpha = 0.35f),
+    )
 }
 
 /**

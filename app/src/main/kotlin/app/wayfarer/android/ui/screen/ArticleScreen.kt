@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,7 +31,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.ui.theme.publicButtonColors
+import app.wayfarer.android.ui.theme.publicOutlinedButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.ui.ArticleHeaderImage
 import app.wayfarer.android.ui.MarkdownBody
@@ -39,6 +42,7 @@ import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfArticle
 import app.wayfarer.core.model.Article
 import app.wayfarer.core.model.EventKind
+import app.wayfarer.core.model.ThreadRef
 
 /**
  * A long-form article in a list: title, summary, and what it is.
@@ -220,7 +224,31 @@ private fun ArticleComments(
     val root = rootRefOfArticle(article.address)
     val threads by controller.threads.threads.collectAsStateWithLifecycle()
     val state = threads[root] ?: ThreadState()
-    var draft by remember(article.address) { mutableStateOf("") }
+
+    // The same sheet the note threads use: whatever is being answered is named
+    // and quoted at the top of it, rather than left to be inferred from an
+    // unlabelled field at the bottom of the page.
+    var replying by remember(article.address) { mutableStateOf<ReplyTarget?>(null) }
+
+    replying?.let { target ->
+        ReplySheet(
+            target = target,
+            posting = state.posting,
+            onDismiss = { replying = null },
+            onSend = { text ->
+                controller.threads.reply(
+                    root = root,
+                    rootKind = EventKind.LONG_FORM.toString(),
+                    rootAuthor = article.author,
+                    parent = target.ref,
+                    parentKind = target.kind,
+                    parentAuthor = target.author,
+                    content = text,
+                )
+                replying = null
+            },
+        )
+    }
 
     // Unlike a note in a feed, an article is a whole screen the reader chose to
     // open, so its conversation is worth fetching without being asked twice.
@@ -246,27 +274,42 @@ private fun ArticleComments(
                 onOpenAuthor = { controller.openProfile(entry.author) },
             )
             Text(entry.content, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Reply",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.publicAccent,
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            replying =
+                                ReplyTarget(
+                                    ref = ThreadRef.Event(entry.id),
+                                    kind = EventKind.COMMENT.toString(),
+                                    author = entry.author,
+                                    toName = controller.displayName(entry.author),
+                                    quote = entry.content,
+                                )
+                        }.padding(horizontal = 4.dp, vertical = 2.dp),
+            )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 
-    ReplyComposer(
-        draft = draft,
-        onDraft = { draft = it },
-        posting = state.posting,
-        onSend = {
-            controller.threads.reply(
-                root = root,
-                rootKind = EventKind.LONG_FORM.toString(),
-                rootAuthor = article.author,
-                parent = root,
-                parentKind = EventKind.LONG_FORM.toString(),
-                parentAuthor = article.author,
-                content = draft,
-            )
-            draft = ""
+    OutlinedButton(
+        onClick = {
+            replying =
+                ReplyTarget(
+                    ref = root,
+                    kind = EventKind.LONG_FORM.toString(),
+                    author = article.author,
+                    toName = controller.displayName(article.author),
+                    quote = article.title,
+                )
         },
-    )
+        colors = publicOutlinedButtonColors(),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+    ) { Text("Comment on this article") }
 }
 
 @Composable
