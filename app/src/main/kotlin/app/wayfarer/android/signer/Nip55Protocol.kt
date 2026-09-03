@@ -89,11 +89,25 @@ object Nip55Protocol {
     /**
      * The kinds this app signs. Listing them lets a signer offer "remember this"
      * once instead of prompting on every note.
+     *
+     * A kind missing here still signs — the signer just asks every time — so the
+     * cost of an omission is silent and only felt by users of an external signer.
+     * Each entry names the action it covers so a new publishing path has a
+     * visible place to register itself:
+     *
+     *  - 0     editing your profile       `ProfileRepository.publish`
+     *  - 1     posting a note             `FeedRepository.post`
+     *  - 3     following, unfollowing     `ContactRepository.follow` / `unfollow`
+     *  - 1111  replying to anything       `ThreadRepository.comment`
+     *  - 10002 publishing your relay list `RelayListRepository.publishOwn`
+     *  - 30023 publishing an article      `ArticleRepository.publish`
      */
     val DEFAULT_PERMISSIONS =
         listOf(
             Permission("sign_event", kind = 0),
             Permission("sign_event", kind = 1),
+            Permission("sign_event", kind = 3),
+            Permission("sign_event", kind = 1111),
             Permission("sign_event", kind = 10002),
             Permission("sign_event", kind = 30023),
         )

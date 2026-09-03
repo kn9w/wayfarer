@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.ui.Avatar
 import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController

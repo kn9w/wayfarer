@@ -86,7 +86,7 @@ private val BannerHeight = 132.dp
  * row says only what is true, and says "found" where the count is really "what
  * arrived from the relays you allow".
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     controller: AppController,

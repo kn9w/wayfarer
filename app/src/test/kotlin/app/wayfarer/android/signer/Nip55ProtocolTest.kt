@@ -1,5 +1,6 @@
 package app.wayfarer.android.signer
 
+import app.wayfarer.core.model.EventKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -47,13 +48,28 @@ class Nip55ProtocolTest {
 
     @Test
     fun `the default permissions cover every kind this app signs`() {
+        // Kept in step with the six signer.sign call sites by hand, because the
+        // list lives in the app module and the kinds live in core. A kind that
+        // falls off here still signs — it just prompts every time — so the
+        // failure it guards against is silent, and only external-signer users
+        // ever feel it.
         val kinds =
             Nip55Protocol.DEFAULT_PERMISSIONS
                 .filter { it.type == "sign_event" }
                 .mapNotNull { it.kind }
                 .toSet()
 
-        assertEquals(setOf(0, 1, 10002, 30023), kinds)
+        assertEquals(
+            setOf(
+                EventKind.METADATA,
+                EventKind.TEXT_NOTE,
+                EventKind.CONTACT_LIST,
+                EventKind.COMMENT,
+                EventKind.RELAY_LIST,
+                EventKind.LONG_FORM,
+            ),
+            kinds,
+        )
     }
 
     @Test
