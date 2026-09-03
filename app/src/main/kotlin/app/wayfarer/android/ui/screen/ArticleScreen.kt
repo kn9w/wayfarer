@@ -53,15 +53,19 @@ fun ArticleRow(
                 .padding(horizontal = PostHorizontalPadding, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // Trail, not the grey every other secondary line uses. In a feed that
+        // mixes notes and articles this kicker is the only thing that says which
+        // one you are looking at before you read the title, and it was the same
+        // colour as the "seen on" line under it.
         Text(
             "long-form article",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.secondary,
         )
         Text(article.title, style = MaterialTheme.typography.titleMedium)
         article.summary?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         PostByline(
-            name = controller.displayName(article.author),
+            author = article.author,
             createdAt = article.publishedAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(article.author) },
@@ -155,10 +159,11 @@ private fun ArticleComments(
     for (entry in state.entries) {
         Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             PostByline(
-                name = controller.displayName(entry.author),
+                author = entry.author,
                 createdAt = entry.createdAt,
                 controller = controller,
                 onOpenAuthor = { controller.openProfile(entry.author) },
+                avatarSize = 22.dp,
             )
             Text(entry.content, style = MaterialTheme.typography.bodyMedium)
         }

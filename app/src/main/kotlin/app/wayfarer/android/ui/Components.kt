@@ -1,21 +1,34 @@
 package app.wayfarer.android.ui
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.wayfarer.android.platform.QrRender
 import app.wayfarer.android.viewmodel.UserMessage
 import app.wayfarer.core.repo.PublishReport
 
@@ -111,4 +124,77 @@ private fun PublishSummary(report: PublishReport) {
         style = MaterialTheme.typography.labelSmall,
         fontFamily = FontFamily.Monospace,
     )
+}
+
+/**
+ * A small tappable pill.
+ *
+ * The profile header's unit of identity: an npub, a lightning address, a
+ * website. Each was a bare line of text before, and four of them stacked read as
+ * one undifferentiated block of metadata rather than as four separate things a
+ * reader might want to do something with.
+ */
+@Composable
+fun IdentityChip(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    monospace: Boolean = false,
+) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        fontFamily = if (monospace) FontFamily.Monospace else null,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
+}
+
+/**
+ * Somebody's npub as a scannable code.
+ *
+ * On a white card whatever the theme, because the quiet zone around a QR code is
+ * part of the code: drawn straight onto a dark background, the border modules
+ * merge into it and readers give up.
+ */
+@Composable
+fun NpubQrCard(
+    npub: String,
+    modifier: Modifier = Modifier,
+    sizeDp: Dp = 240.dp,
+) {
+    val density = LocalDensity.current
+    val sizePx = with(density) { sizeDp.roundToPx() }
+    val code = remember(npub, sizePx) { QrRender.encode(npub, sizePx) }
+
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (code == null) {
+            Text(
+                "This key could not be drawn as a code.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Black,
+            )
+        } else {
+            Image(
+                bitmap = code,
+                contentDescription = "QR code of this npub",
+                filterQuality = FilterQuality.None,
+                modifier = Modifier.size(sizeDp),
+            )
+        }
+    }
 }

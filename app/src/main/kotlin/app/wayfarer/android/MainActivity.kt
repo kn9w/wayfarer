@@ -8,10 +8,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import app.wayfarer.android.platform.DeviceAuthBridge
+import app.wayfarer.android.platform.ImageLoader
 import app.wayfarer.android.platform.Nip55Bridge
 import app.wayfarer.android.platform.QrScanBridge
 import app.wayfarer.android.signer.Nip55Protocol
 import app.wayfarer.android.ui.LoadingScreen
+import app.wayfarer.android.ui.ProvideImageLoader
 import app.wayfarer.android.ui.WayfarerApp
 import app.wayfarer.android.ui.theme.WayfarerTheme
 import app.wayfarer.android.viewmodel.DeviceAuthOutcome
@@ -66,16 +68,23 @@ class MainActivity : ComponentActivity() {
             WayfarerTheme {
                 val wayfarer by produceState<Wayfarer?>(initialValue = null) { value = wayfarerApp.wayfarer() }
 
+                // Null until it is built, which is fine: an avatar with no loader
+                // draws its mark, which is what it would draw anyway until a
+                // media host is allowed.
+                val images by produceState<ImageLoader?>(initialValue = null) { value = wayfarerApp.imageLoader() }
+
                 when (val ready = wayfarer) {
                     null -> LoadingScreen("Starting up…")
                     else ->
-                        WayfarerApp(
-                            core = ready,
-                            scope = wayfarerApp.scope,
-                            externalSignerLogin = signerLoginFor(ready),
-                            deviceAuth = ::confirmDeviceOwner,
-                            qrScan = qrScanFor(),
-                        )
+                        ProvideImageLoader(images) {
+                            WayfarerApp(
+                                core = ready,
+                                scope = wayfarerApp.scope,
+                                externalSignerLogin = signerLoginFor(ready),
+                                deviceAuth = ::confirmDeviceOwner,
+                                qrScan = qrScanFor(),
+                            )
+                        }
                 }
             }
         }

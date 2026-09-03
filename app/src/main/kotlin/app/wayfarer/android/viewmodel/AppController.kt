@@ -6,6 +6,9 @@ import app.wayfarer.core.model.ArticleDraft
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.EventId
+import app.wayfarer.core.model.MediaHost
+import app.wayfarer.core.model.MediaReason
+import app.wayfarer.core.model.MediaSource
 import app.wayfarer.core.model.NostrEvent
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.Profile
@@ -91,6 +94,7 @@ class AppController(
 
     /** A relay whose details the user asked to see, from somewhere other than the relay list. */
     private val relayFocusState = MutableStateFlow<RelayUrl?>(null)
+    private val mediaFocusState = MutableStateFlow<MediaHost?>(null)
     private val messageState = MutableStateFlow<UserMessage?>(null)
     private val feedState = MutableStateFlow(FeedState())
     private val viewedProfileState = MutableStateFlow<ViewedProfile?>(null)
@@ -185,6 +189,15 @@ class AppController(
     val suggestedRelays: List<RelayUrl> get() = core.suggestedRelays
 
     val relays = RelayController(core, scope, { messageState.value = it }, ::onRelayPermissionsChanged)
+
+    /**
+     * The other permission list: which servers may be asked for a picture.
+     *
+     * Its own view model rather than a corner of [relays], because they are two
+     * different questions and confusing them is the mistake the whole relay
+     * screen is written to prevent.
+     */
+    val media = MediaController(core, scope, { messageState.value = it })
 
     /**
      * The account's public NIP-65 list, which is not the same thing as [relays]
@@ -967,22 +980,6 @@ class AppController(
             )
     }
 
-    /** Resolves an npub / nprofile / hex key typed into the search field. */
-    fun openProfileByKey(input: String) {
-        val ref = core.bech32.decodeProfileRef(input)
-        if (ref == null) {
-            messageState.value = UserMessage.Error("That is not an npub or a hex pubkey.")
-            return
-        }
-        // An nprofile says where to find this person. Those relays are offered for
-        // approval rather than used: a hint is somebody else's suggestion.
-        val hints = ref.relayHints.mapNotNull(core.normalizer::normalize)
-        if (hints.isNotEmpty()) {
-            run { core.relayDirectory.noteHint(hints, core.bech32.encodeNpub(ref.pubKey)) }
-        }
-        openProfile(ref.pubKey)
-    }
-
     fun ownProfileDraft(): ProfileDraft {
         val me = core.accounts.account.value ?: return ProfileDraft("", "", "", "", "", "", "", "")
         return ProfileDraft.from(core.profiles[me.pubKey] ?: Profile.empty(me.pubKey))
@@ -1003,6 +1000,16 @@ class AppController(
         }
 
     fun profileFor(pubKey: PubKey): Profile? = core.profiles[pubKey]
+
+    /**
+     * Every profile this app has seen, as a flow.
+     *
+     * [profileFor] peeks at the same map without one, so a composable built on it
+     * never recomposes when a kind 0 lands — which is exactly the bug the
+     * advertised-relay card hit before it moved to the reactive `relayLists`.
+     * Avatars need the picture the moment it arrives, so they read this instead.
+     */
+    val profiles: StateFlow<Map<PubKey, Profile>> get() = core.profiles.profiles
 
     fun npubFor(pubKey: PubKey): String = core.bech32.encodeNpub(pubKey)
 
@@ -1056,6 +1063,35 @@ class AppController(
 
     fun clearRelayFocus() {
         relayFocusState.value = null
+    }
+
+    /** Which media host the media screen should open, once. */
+    val mediaFocus: StateFlow<MediaHost?> = mediaFocusState.asStateFlow()
+
+    /**
+     * Opens one media host's details on the media screen.
+     *
+     * Queues it first when nothing knows about it yet, for the same reason
+     * [openRelayDetail] does: a host tapped from an avatar that has never been
+     * drawn is in none of the screen's lists, and the sheet would close on a row
+     * it could not find.
+     */
+    fun openMediaHost(
+        host: MediaHost,
+        because: String,
+    ) = run {
+        if (core.mediaDirectory.grants[host] == null &&
+            core.mediaDirectory.pending[host] == null &&
+            host !in core.mediaDirectory.snapshot.value.denied
+        ) {
+            core.mediaDirectory.note(listOf(host), MediaReason(MediaSource.AVATAR, because))
+        }
+        mediaFocusState.value = host
+        go(Screen.Media)
+    }
+
+    fun clearMediaFocus() {
+        mediaFocusState.value = null
     }
 
     /** What "active" means on the Global screen, in days. */
@@ -1316,6 +1352,9 @@ sealed interface Screen {
     data object Home : Screen
 
     data object Relays : Screen
+
+    /** Which servers may be asked for a picture. Not the relay list. */
+    data object Media : Screen
 
     data object Compose : Screen
 

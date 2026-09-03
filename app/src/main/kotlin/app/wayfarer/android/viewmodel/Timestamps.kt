@@ -53,3 +53,30 @@ fun formatTimestamp(
  * screens of this app.
  */
 fun shortenNpub(npub: String): String = if (npub.length <= 20) npub else npub.take(12) + "…" + npub.takeLast(6)
+
+/**
+ * One or two letters to draw in place of somebody's photograph.
+ *
+ * The input is whatever `displayName` returned, which for a stranger is a
+ * shortened npub — and there the leading `npub1` is the one part every key on
+ * the network shares, so taking the first two characters would draw the same
+ * mark for everybody. The distinctive part starts after the prefix, so that is
+ * what is used.
+ *
+ * Falls back to a single dot rather than an empty string: a mark with nothing in
+ * it reads as a rendering failure, and a name can be any string at all.
+ */
+fun initialsOf(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return "·"
+
+    val distinctive = if (trimmed.startsWith("npub1")) trimmed.drop(5) else trimmed
+    val words = distinctive.split(' ', '\t', '\n').filter { it.isNotBlank() }
+
+    val letters =
+        when {
+            words.size >= 2 -> "${words[0].first()}${words[1].first()}"
+            else -> words.firstOrNull()?.take(2) ?: "·"
+        }
+    return letters.uppercase()
+}

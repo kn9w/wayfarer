@@ -720,10 +720,11 @@ private fun ThreadEntryRow(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         PostByline(
-            name = controller.displayName(entry.author),
+            author = entry.author,
             createdAt = entry.createdAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(entry.author) },
+            avatarSize = 22.dp,
         )
         Text(entry.content, style = MaterialTheme.typography.bodySmall)
 
@@ -783,7 +784,7 @@ fun NoteRow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         PostByline(
-            name = controller.displayName(note.author),
+            author = note.author,
             createdAt = note.createdAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(note.author) },
@@ -832,28 +833,34 @@ fun NoteRow(
 /** Who wrote it and when — the two facts every post carries. */
 @Composable
 internal fun PostByline(
-    name: String,
+    // The key rather than the name: every caller was passing
+    // controller.displayName(author) and the avatar needs the key anyway, so
+    // taking it here is one lookup in one place instead of five.
+    author: PubKey,
     createdAt: Long,
     controller: AppController,
     onOpenAuthor: (() -> Unit)? = null,
     /** Sits after the timestamp. The overflow menu, where a post has one. */
     trailing: @Composable (() -> Unit)? = null,
+    /** Smaller inside a thread, where the rows are already indented. */
+    avatarSize: Dp = 28.dp,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Avatar(pubKey = author, controller = controller, size = avatarSize, onClick = onOpenAuthor)
         Text(
-            name,
+            controller.displayName(author),
             style = MaterialTheme.typography.titleSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier =
                 if (onOpenAuthor == null) {
-                    Modifier.weight(1f, fill = false)
+                    Modifier.weight(1f)
                 } else {
-                    Modifier.weight(1f, fill = false).clickable(onClick = onOpenAuthor)
+                    Modifier.weight(1f).clickable(onClick = onOpenAuthor)
                 },
         )
         Text(

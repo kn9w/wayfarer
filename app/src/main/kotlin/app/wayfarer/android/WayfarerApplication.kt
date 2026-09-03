@@ -4,6 +4,7 @@ import android.app.Application
 import app.wayfarer.android.platform.AndroidKeyValueStore
 import app.wayfarer.android.platform.AndroidSecretStore
 import app.wayfarer.android.platform.AppSignerFactory
+import app.wayfarer.android.platform.ImageLoader
 import app.wayfarer.android.platform.Nip55Bridge
 import app.wayfarer.core.Wayfarer
 import app.wayfarer.nostr.quartz.quartzBackend
@@ -51,4 +52,21 @@ class WayfarerApplication : Application() {
     }
 
     suspend fun wayfarer(): Wayfarer = deferred.await()
+
+    /**
+     * The one client pictures are fetched through, gated on the media directory.
+     *
+     * Built here rather than in the container because it needs a cache directory
+     * and OkHttp, neither of which the core may know about — and built from the
+     * directory the container created, so the gate and the screen that fills it
+     * are looking at the same list.
+     */
+    private val deferredImages by lazy {
+        scope.async {
+            val core = deferred.await()
+            ImageLoader(ImageLoader.client(core.mediaDirectory, cacheDir))
+        }
+    }
+
+    suspend fun imageLoader(): ImageLoader = deferredImages.await()
 }

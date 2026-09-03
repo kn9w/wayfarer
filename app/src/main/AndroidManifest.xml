@@ -3,7 +3,9 @@
 
     <!--
         Two permissions, and both are asked for a visible reason. INTERNET is
-        talking to the relays the user has approved — there is no analytics, no
+        talking to the relays the user has approved, and fetching pictures from
+        the media hosts the user has allowed — two separate permission lists, and
+        nothing is contacted that is not on one of them. There is no analytics, no
         push service and no media upload. CAMERA is only ever used by
         QrScanActivity, is requested at the moment that screen opens, and is
         declared optional so a device without a camera can still install the app:

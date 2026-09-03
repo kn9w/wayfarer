@@ -52,7 +52,7 @@ fun ReadNoteScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         PostByline(
-            name = controller.displayName(note.author),
+            author = note.author,
             createdAt = note.createdAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(note.author) },

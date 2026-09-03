@@ -53,6 +53,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
+    // Pictures, and only from media hosts the user has allowed. The gate is an
+    // interceptor on the one client that fetches them — see ImageLoader.
+    implementation(libs.okhttp)
+
     // Only QrScanActivity touches these, and only when the user opens the scanner.
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)

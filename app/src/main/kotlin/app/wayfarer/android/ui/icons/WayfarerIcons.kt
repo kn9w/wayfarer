@@ -206,6 +206,74 @@ object WayfarerIcons {
                 }
             }.also { _check = it }
 
+    /**
+     * Partly there: a circle filled on one side only.
+     *
+     * The middle state between [Check] and [Close], so that "some of these
+     * relays are reachable" is legible without relying on the amber it is drawn
+     * in — green against amber against red is the one palette a colour-blind
+     * reader cannot separate.
+     */
+    val HalfCheck: ImageVector
+        get() =
+            _halfCheck ?: icon("HalfCheck") {
+                stroked {
+                    circle(cx = 12f, cy = 12f, r = 8.5f)
+                }
+                filled {
+                    // The left half, as an arc closed across the diameter.
+                    moveTo(12f, 3.5f)
+                    arcToRelative(8.5f, 8.5f, 0f, false, false, 0f, 17f)
+                    close()
+                }
+            }.also { _halfCheck = it }
+
+    /** Media servers: a picture frame, with a horizon and a sun in it. */
+    val Image: ImageVector
+        get() =
+            _image ?: icon("Image") {
+                stroked {
+                    // The frame.
+                    moveTo(3.5f, 5f)
+                    lineTo(20.5f, 5f)
+                    lineTo(20.5f, 19f)
+                    lineTo(3.5f, 19f)
+                    close()
+                    // A hill rising to meet the far edge.
+                    moveTo(3.5f, 16f)
+                    lineTo(9f, 10.5f)
+                    lineTo(14f, 15.5f)
+                    lineTo(16.5f, 13f)
+                    lineTo(20.5f, 17f)
+                }
+                filled {
+                    circle(cx = 15.5f, cy = 8.75f, r = 1.6f)
+                }
+            }.also { _image = it }
+
+    /** A scannable code: three finders and a scattering of modules. */
+    val Qr: ImageVector
+        get() =
+            _qr ?: icon("Qr") {
+                stroked(width = 1.8f) {
+                    // The three finder squares a reader looks for first.
+                    rect(3.9f, 3.9f, 9.6f, 9.6f)
+                    rect(14.4f, 3.9f, 20.1f, 9.6f)
+                    rect(3.9f, 14.4f, 9.6f, 20.1f)
+                }
+                filled {
+                    // Their centres, plus enough data modules to read as a code
+                    // rather than as three empty boxes.
+                    rect(5.8f, 5.8f, 7.7f, 7.7f)
+                    rect(16.3f, 5.8f, 18.2f, 7.7f)
+                    rect(5.8f, 16.3f, 7.7f, 18.2f)
+                    rect(14.4f, 14.4f, 16.3f, 16.3f)
+                    rect(18.2f, 14.4f, 20.1f, 16.3f)
+                    rect(16.3f, 18.2f, 18.2f, 20.1f)
+                    rect(11.5f, 11.5f, 13.4f, 13.4f)
+                }
+            }.also { _qr = it }
+
     /** Blocked: a circle struck through. */
     val Block: ImageVector
         get() =
@@ -244,6 +312,9 @@ object WayfarerIcons {
     private var _search: ImageVector? = null
     private var _close: ImageVector? = null
     private var _check: ImageVector? = null
+    private var _halfCheck: ImageVector? = null
+    private var _image: ImageVector? = null
+    private var _qr: ImageVector? = null
     private var _block: ImageVector? = null
 }
 

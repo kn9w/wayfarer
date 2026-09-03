@@ -10,6 +10,7 @@ import app.wayfarer.core.nostr.RelayUrlNormalizer
 import app.wayfarer.core.outbox.OutboxConfig
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.outbox.RelayListCache
+import app.wayfarer.core.relay.MediaDirectory
 import app.wayfarer.core.relay.RelayDirectory
 import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.relay.RelayInfoService
@@ -27,6 +28,8 @@ import app.wayfarer.core.repo.RelayListRepository
 import app.wayfarer.core.repo.SignerFactory
 import app.wayfarer.core.repo.ThreadRepository
 import app.wayfarer.core.store.KeyValueStore
+import app.wayfarer.core.store.MediaDirectoryCodec
+import app.wayfarer.core.store.PersistedMediaDirectoryStore
 import app.wayfarer.core.store.PersistedRelayDirectoryStore
 import app.wayfarer.core.store.RelayDirectoryCodec
 import app.wayfarer.core.store.SecretStore
@@ -65,6 +68,15 @@ data class NostrBackend(
  */
 class Wayfarer private constructor(
     val relayDirectory: RelayDirectory,
+    /**
+     * The other permission list: which servers may be asked for a picture.
+     *
+     * Separate from [relayDirectory] rather than folded into it, because they
+     * answer different questions and are wrong in different ways. A relay that
+     * is not approved costs the user posts they wanted; a media host that is not
+     * approved costs them a photograph and nothing else.
+     */
+    val mediaDirectory: MediaDirectory,
     val relayLists: RelayListCache,
     val router: OutboxRouter,
     val transport: RelayTransport,
@@ -140,6 +152,17 @@ class Wayfarer private constructor(
                     initial = directoryStore.load(),
                     persistence = directoryStore,
                 )
+
+            // No `suggest` call to match the one below: the media queue starts
+            // empty and fills from the profiles the user actually opens. See
+            // MediaDirectory's own comment for why nothing is shipped here.
+            val mediaStore = PersistedMediaDirectoryStore(settings, MediaDirectoryCodec())
+            val media =
+                MediaDirectory(
+                    clock = backend.clock,
+                    initial = mediaStore.load(),
+                    persistence = mediaStore,
+                )
             val suggested = bootstrapSuggestions.mapNotNull(backend.normalizer::normalize)
             directory.suggest(suggested)
 
@@ -171,6 +194,7 @@ class Wayfarer private constructor(
 
             return Wayfarer(
                 relayDirectory = directory,
+                mediaDirectory = media,
                 relayLists = relayListCache,
                 router = router,
                 transport = transport,

@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.ui.Avatar
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.repo.FollowSource
@@ -91,30 +92,33 @@ private fun FollowRow(
     sources: Set<FollowSource>,
     controller: AppController,
 ) {
-    Column(
+    Row(
         Modifier
             .fillMaxWidth()
             .clickable { controller.openProfile(person) }
             .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(controller.displayName(person), style = MaterialTheme.typography.titleSmall)
-        Text(
-            when {
-                sources.containsAll(listOf(FollowSource.Published, FollowSource.Local)) ->
-                    "on your public list and on this phone"
-                FollowSource.Published in sources -> "on your public follow list"
-                else -> "on this phone only"
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (FollowSource.Published in sources) {
-                TextButton(onClick = { controller.unfollowPublicly(person) }) { Text("Unfollow publicly") }
-            }
-            if (FollowSource.Local in sources) {
-                TextButton(onClick = { controller.unfollowLocally(person) }) { Text("Remove from this phone") }
+        Avatar(pubKey = person, controller = controller, size = 36.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(controller.displayName(person), style = MaterialTheme.typography.titleSmall)
+            Text(
+                when {
+                    sources.containsAll(listOf(FollowSource.Published, FollowSource.Local)) ->
+                        "on your public list and on this phone"
+                    FollowSource.Published in sources -> "on your public follow list"
+                    else -> "on this phone only"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (FollowSource.Published in sources) {
+                    TextButton(onClick = { controller.unfollowPublicly(person) }) { Text("Unfollow publicly") }
+                }
+                if (FollowSource.Local in sources) {
+                    TextButton(onClick = { controller.unfollowLocally(person) }) { Text("Remove from this phone") }
+                }
             }
         }
     }

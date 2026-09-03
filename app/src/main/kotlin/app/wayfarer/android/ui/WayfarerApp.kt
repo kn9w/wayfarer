@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +56,7 @@ import app.wayfarer.android.ui.screen.EditArticleScreen
 import app.wayfarer.android.ui.screen.EditProfileScreen
 import app.wayfarer.android.ui.screen.FollowsScreen
 import app.wayfarer.android.ui.screen.HomeScreen
+import app.wayfarer.android.ui.screen.MediaScreen
 import app.wayfarer.android.ui.screen.OnboardingSurface
 import app.wayfarer.android.ui.screen.PagingBar
 import app.wayfarer.android.ui.screen.ProfileScreen
@@ -203,6 +205,7 @@ fun WayfarerApp(
                 canGoBack = canGoBack,
                 onBack = { controller.back() },
                 onRelays = { controller.go(Screen.Relays) },
+                onMedia = { controller.go(Screen.Media) },
             )
         },
         floatingActionButton = {
@@ -252,6 +255,7 @@ fun WayfarerApp(
                 Screen.Home -> HomeScreen(controller)
                 Screen.Compose -> ComposeNoteScreen(controller)
                 Screen.Relays -> RelayScreen(controller)
+                Screen.Media -> MediaScreen(controller)
                 Screen.EditProfile -> EditProfileScreen(controller)
                 Screen.Settings -> SettingsScreen(controller)
                 Screen.RelayList -> RelayListScreen(controller)
@@ -322,13 +326,16 @@ private fun AppHeader(
     canGoBack: Boolean,
     onBack: () -> Unit,
     onRelays: () -> Unit,
+    onMedia: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
-            // The whole bar is the target, not just the icon on the end. Every
-            // word in it is about relays, so anywhere in it meaning "show me the
-            // relays" is what a reader would expect. The back button keeps its
-            // own tap: a child that handles a click consumes it.
+            // The bar itself is the target, not just the icon on the end: every
+            // word written in it is a relay count, so anywhere in it meaning
+            // "show me the relays" is what a reader would expect. The two icons
+            // and the back button keep their own taps — a child that handles a
+            // click consumes it — which is what lets the pictures button sit
+            // here without the surrounding bar swallowing it.
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -365,6 +372,13 @@ private fun AppHeader(
 
             Spacer(Modifier.weight(1f))
 
+            // Pictures live next to relays because they are the same kind of
+            // decision — which servers may this app talk to — and these two
+            // lists are the only things in the app that answer it.
+            IconButton(onClick = onMedia, modifier = Modifier.size(36.dp)) {
+                Icon(WayfarerIcons.Image, contentDescription = "Pictures")
+            }
+
             // No count on the icon: the line to its left already says how many
             // are waiting, and the badge was the same number twice.
             IconButton(onClick = onRelays, modifier = Modifier.size(36.dp)) {
@@ -399,8 +413,25 @@ private fun TabBar(
                     .height(64.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Tab(WayfarerIcons.Globe, "Global", globalSelected, onGlobal, Modifier.weight(1f))
-            Tab(WayfarerIcons.Tree, "Local", localSelected, onLocal, Modifier.weight(1f))
+            // Compass for the half of the app that reaches out, Moss for the half
+            // that stays on this phone. The two accents are what the palette was
+            // built around; tinting both tabs alike threw that away.
+            Tab(
+                WayfarerIcons.Globe,
+                "Global",
+                globalSelected,
+                onGlobal,
+                MaterialTheme.colorScheme.primary,
+                Modifier.weight(1f),
+            )
+            Tab(
+                WayfarerIcons.Tree,
+                "Local",
+                localSelected,
+                onLocal,
+                MaterialTheme.colorScheme.tertiary,
+                Modifier.weight(1f),
+            )
         }
     }
 }
@@ -411,10 +442,10 @@ private fun Tab(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    selectedTint: Color,
     modifier: Modifier = Modifier,
 ) {
-    val tint =
-        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val tint = if (selected) selectedTint else MaterialTheme.colorScheme.onSurfaceVariant
 
     Column(
         modifier = modifier.fillMaxHeight().clickable(onClick = onClick),
@@ -435,7 +466,10 @@ private fun ConnectionDot(live: Boolean) {
             .padding(start = 8.dp)
             .size(8.dp)
             .background(
-                if (live) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                // Moss, which is what the sentence above always claimed. It was
+                // drawn in Compass blue, so "connected" and "this is a button"
+                // were the same colour in the one bar that means both.
+                if (live) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline,
                 CircleShape,
             ),
     )
