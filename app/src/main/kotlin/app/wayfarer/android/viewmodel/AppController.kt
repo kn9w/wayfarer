@@ -153,6 +153,25 @@ class AppController(
     /** True between [onEnterForeground] and [onLeaveForeground]. */
     private var foreground = false
 
+    /**
+     * An account signed in while onboarding is still on screen, waiting for it
+     * to finish.
+     *
+     * Relay grants outlive both the session and the account: they are persisted,
+     * and logging out does not withdraw them. So the second time somebody
+     * reaches "Where should we start?" — after a log out, or on any later launch
+     * — the app already has relays it is allowed to talk to, and the load that
+     * follows creating an account had somewhere to go. It went there, while a
+     * screen saying "Wayfarer has not contacted anything yet" was up.
+     *
+     * `restartStream` has always refused to open a subscription during
+     * onboarding for exactly this reason. The one-shot loads were gated on relay
+     * permissions alone, which is a weaker rule than the one the screen states.
+     * Now they wait here instead of being dropped: the work still happens, on
+     * the far side of the question.
+     */
+    private var deferredSignIn: Account? = null
+
     val screen: StateFlow<Screen> = screenState.asStateFlow()
 
     /**
@@ -259,7 +278,7 @@ class AppController(
         quietly {
             val restored = core.accounts.restore()
             when {
-                restored != null -> onSignedIn(restored)
+                restored != null -> loadSignedInAccount(restored)
                 // A user who went through the introduction and chose not to make an
                 // account is not a new user. Sending them back to the first screen on
                 // every launch would read as the app refusing to let them in.
@@ -376,7 +395,14 @@ class AppController(
 
     /** Backs out of the sign-in screen, for a guest who opened it and changed their mind. */
     fun leaveOnboarding() {
-        if (introduced) onboardingState.value = null
+        if (!introduced) return
+        onboardingState.value = null
+        // Whoever signed in while this surface was up is now in the app, so
+        // whatever was waiting on the far side of it can go ahead.
+        deferredSignIn?.let { account ->
+            deferredSignIn = null
+            quietly { onSignedIn(account) }
+        }
     }
 
     /**
@@ -468,8 +494,10 @@ class AppController(
         if (looksLikeRelay(trimmed)) {
             val url = core.addRelay(trimmed, read = true, write = false)
             if (url != null) {
-                completeOnboarding()
-                loadFeed()
+                // The account load released by completeOnboarding ends in a feed
+                // load of its own, so asking for one here as well would be the
+                // same query twice on the first screen after setup.
+                if (!completeOnboarding()) loadFeed()
                 return
             }
         }
@@ -505,21 +533,32 @@ class AppController(
                 // about this account follows on its own. Same split as
                 // afterSignIn, and for the same reason.
                 completeOnboarding()
-                core.accounts.account.value?.let { account -> quietly { onSignedIn(account) } }
+                core.accounts.account.value?.let(::loadSignedInAccount)
             }
             RelayPurpose.Browse -> {
-                completeOnboarding()
-                loadFeed()
+                if (!completeOnboarding()) loadFeed()
             }
         }
     }
 
-    private suspend fun completeOnboarding() {
+    /**
+     * Ends onboarding, and releases whatever was waiting for it to end.
+     *
+     * Returns true when a signed-in account's load has just been started, so a
+     * caller that would otherwise load the feed itself does not ask for the same
+     * thing twice.
+     */
+    private suspend fun completeOnboarding(): Boolean {
         introduced = true
         core.onboarding.markComplete()
         onboardingState.value = null
         goToRoot(Screen.Home)
         recomputeRelayListPrompt()
+
+        val waiting = deferredSignIn ?: return false
+        deferredSignIn = null
+        quietly { onSignedIn(waiting) }
+        return true
     }
 
     private companion object {
@@ -542,13 +581,11 @@ class AppController(
         run {
             val (account, nsec) = core.accounts.createAccount()
             onboardingState.value = OnboardingStep.Backup(nsec)
-            // Not awaited: the account exists and the key is on screen, which is
-            // what the press asked for. Loading what this account has on the
-            // network is somebody else's servers taking their time, and it used
-            // to hold the progress bar through the backup screen and on into
-            // "Where should we start?", where it looked like the question itself
-            // was still loading.
-            quietly { onSignedIn(account) }
+            // Neither awaited nor started here. The account exists and the key
+            // is on screen, which is what the press asked for; the reading waits
+            // until onboarding is over, because there are still questions on
+            // screen about what this app may talk to.
+            loadSignedInAccount(account)
         }
 
     fun login(input: String) =
@@ -576,6 +613,22 @@ class AppController(
         }
 
     /**
+     * Loads what an account has on the network — but not while the user is still
+     * being asked what may be contacted.
+     *
+     * The rule the whole onboarding surface rests on: nothing is contacted until
+     * the questions are answered. See [deferredSignIn] for what used to happen
+     * instead.
+     */
+    private fun loadSignedInAccount(account: Account) {
+        if (onboardingState.value != null) {
+            deferredSignIn = account
+            return
+        }
+        quietly { onSignedIn(account) }
+    }
+
+    /**
      * With nothing approved, finding out who this account *is* — its profile,
      * follows and relay list — means querying relays the user has not chosen. So
      * that is asked for rather than done.
@@ -588,7 +641,7 @@ class AppController(
         // The app opens now; what this account has out there arrives when it
         // arrives. See createAccount for why that is not held under the bar.
         completeOnboarding()
-        quietly { onSignedIn(account) }
+        loadSignedInAccount(account)
     }
 
     /**
@@ -753,6 +806,13 @@ class AppController(
      * up as the other.
      */
     private suspend fun loadFeed() {
+        // The same rule restartStream has always obeyed, now obeyed by the loads
+        // as well: onboarding is the conversation about what may be contacted,
+        // and nothing may be contacted while it is still going on. Gating this
+        // on relay permissions alone was weaker than the rule, because
+        // permissions outlive the session that granted them.
+        if (onboardingState.value != null) return
+
         ensureTransportStarted()
 
         val me = core.accounts.account.value

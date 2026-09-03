@@ -68,6 +68,13 @@ separate, explicitly requested action — see *Outbox* below — and the screen 
 buttons are. (If that list ever becomes shared between a user's own devices, the natural shape is an
 encrypted private event, which is still not the same thing as NIP-65.)
 
+Nothing is contacted while onboarding is on screen — not the live subscription, and not the
+one-shot loads either. That distinction was a real bug rather than a nicety: relay grants are
+persisted and survive both logging out and the account itself, so the *second* time somebody reaches
+"Where should we start?", the app already had relays it was allowed to talk to and the load behind a
+freshly created account went and used them, under a screen saying nothing had been contacted yet.
+A sign-in that happens during onboarding now waits for onboarding to end, and is then run in full.
+
 Approving a relay reloads whatever is on screen against the new permission. It is the one thing
 standing between a new user and the posts they are waiting for, so it is not left to them to
 discover that a Refresh button now does something different.

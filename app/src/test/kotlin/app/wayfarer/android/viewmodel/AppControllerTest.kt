@@ -552,6 +552,39 @@ class AppControllerTest {
             assertEquals(Screen.Profile(pubKey), controller.screen.value)
         }
 
+    // ---- nothing is contacted during onboarding ---------------------------
+
+    @Test
+    fun `an account created while onboarding is up contacts nothing until it ends`() =
+        runTest {
+            val core = wayfarer()
+            // The state a second run is in: relay grants are persisted and
+            // survive both the session and the account, so by the time anybody
+            // sees "Where should we start?" a second time, the app already has
+            // somewhere it is allowed to go.
+            core.relayDirectory.approve(relay("open.example"), read = true, write = false)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            controller.createAccount()
+            runCurrent()
+
+            // The screen at this point says Wayfarer has not contacted anything
+            // yet. That has to be true: permissions granted in some earlier
+            // session are not an answer to the question still on screen.
+            assertTrue(controller.onboarding.value is OnboardingStep.Backup)
+            assertEquals(0, transport.startCount, "no client is brought up during onboarding")
+            assertTrue(transport.fetched.isEmpty(), "and nothing is asked of anybody")
+
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            // And on the far side of the question it is not dropped: what the
+            // account has on the network is fetched once the user is in the app.
+            assertTrue(transport.fetched.isNotEmpty(), "the load waits for onboarding, it does not vanish")
+        }
+
     // ---- logging out ------------------------------------------------------
 
     @Test
