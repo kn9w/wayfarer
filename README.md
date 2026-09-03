@@ -193,7 +193,7 @@ Android plugin and builds on the JDK alone. `google()` is needed as a repository
 
 ## Status
 
-`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 190 unit tests
+`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 211 unit tests
 covering the relay gate, the set-cover router, NIP-11 consent, NIP-23 addressable replacement, the
 NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its separation from the local
 permission list, the onboarding sequence — including that a first launch
@@ -201,7 +201,7 @@ queries nothing, that the key screen is unreachable from the tab bar, and that l
 before touching the app's own relays — and round-trips through real secp256k1 signing and real
 Quartz parsing.
 
-`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 146 tests green — which is
+`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 167 tests green — which is
 possible precisely because it no longer applies the Android plugin. The rest of the Android build
 has not been run: `dl.google.com` was unreachable from the machine this was written on, so no
 androidx artifact or Android SDK could be fetched. The modules were verified by

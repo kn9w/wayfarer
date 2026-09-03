@@ -53,6 +53,14 @@ object MediaUrls {
  * It reads the host from the request that is about to be sent, not from whatever
  * string produced it, so there is no gap between what was checked and what is
  * fetched.
+ *
+ * Registered twice, and that is load bearing. As an *application* interceptor it
+ * runs once per call, before the cache is consulted, so a host whose grant was
+ * revoked cannot still be served from disk. As a *network* interceptor it runs
+ * once per actual network request — which is the only way a redirect is seen at
+ * all: OkHttp follows redirects below the application interceptors, so a
+ * `302` from an approved host to an unapproved one would otherwise be fetched
+ * without this ever being consulted a second time.
  */
 class GatedImageRequests(
     private val policy: MediaAccessPolicy,
@@ -124,7 +132,16 @@ class ImageLoader(
         val request = Request.Builder().url(url).build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-            val bytes = response.body.bytes()
+            // Read a bounded prefix rather than the whole body. `bytes()` would
+            // buffer whatever arrives entirely into heap before anything gets a
+            // chance to look at it, so a host that has been approved — or one
+            // serving somebody else's upload — could answer an avatar request
+            // with a gigabyte and take the app down. The downscale below only
+            // helps after this point, which is too late.
+            val body = response.body.source()
+            body.request(MAX_IMAGE_BYTES + 1L)
+            if (body.buffer.size > MAX_IMAGE_BYTES) return null
+            val bytes = body.buffer.readByteArray()
             if (bytes.isEmpty()) return null
             return decode(bytes, maxPixels)?.asImageBitmap()
         }
@@ -162,6 +179,15 @@ class ImageLoader(
     }
 
     companion object {
+        /**
+         * The most this will read for one picture.
+         *
+         * Generous for an avatar or a banner and far below anything that
+         * threatens the heap, so it bounds a hostile answer without rejecting a
+         * real photograph.
+         */
+        private const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
+
         /** An eighth of the heap, the conventional share for a bitmap cache. */
         fun defaultCacheBytes(): Int = (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
@@ -180,11 +206,15 @@ class ImageLoader(
         ): OkHttpClient =
             OkHttpClient
                 .Builder()
-                // First in the chain, so it runs before any cache lookup or
-                // redirect handling. A redirect to a different host is re-checked
-                // because OkHttp sends the followed request through the chain
-                // again.
+                // Outermost: runs once per call, before the cache is consulted,
+                // so a revoked host is not served from disk either.
                 .addInterceptor(GatedImageRequests(policy))
+                // And again per network request. Redirects are followed *below*
+                // the application interceptors, so this is the only one of the
+                // two that sees a hop to a different host — without it, an
+                // approved host could redirect the request, and the user's IP,
+                // anywhere it liked.
+                .addNetworkInterceptor(GatedImageRequests(policy))
                 .cache(okhttp3.Cache(File(cacheDir, "media"), cacheBytes))
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

@@ -63,6 +63,7 @@ import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.BrowseMode
 import app.wayfarer.android.viewmodel.BrowseOrder
 import app.wayfarer.android.viewmodel.FeedItem
+import app.wayfarer.android.viewmodel.FeedState
 import app.wayfarer.android.viewmodel.GlobalState
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.ThreadState
@@ -100,6 +101,7 @@ fun HomeScreen(controller: AppController) {
     val global by controller.global.state.collectAsStateWithLifecycle()
     val refreshing by controller.refreshing.collectAsStateWithLifecycle()
     val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
+    val feed by controller.feed.collectAsStateWithLifecycle()
 
     var filtering by remember { mutableStateOf(false) }
 
@@ -116,6 +118,7 @@ fun HomeScreen(controller: AppController) {
     Column(Modifier.fillMaxSize()) {
         GlobalHeader(global, controller, onFilter = { filtering = true })
         HorizontalDivider()
+        ReadFootprint(feed, controller)
 
         PullToRefreshBox(
             isRefreshing = refreshing,
@@ -130,6 +133,86 @@ fun HomeScreen(controller: AppController) {
         }
 
     }
+}
+
+/**
+ * What the last load asked for, and of whom.
+ *
+ * The app has always been precise about publishing — a published note names
+ * every relay that took it and what each one said — and silent about reading,
+ * which is the direction that actually discloses something. A read names the
+ * accounts it wants, so the relays asked are the relays told who you follow.
+ * That was computed on every load and never shown; this is where it is shown.
+ *
+ * Collapsed to one line because it is context rather than content, and it must
+ * not push the feed down the screen. Expanded, it names the relays: "four
+ * relays" answers a much weaker question than "these four".
+ */
+@Composable
+private fun ReadFootprint(
+    feed: FeedState,
+    controller: AppController,
+) {
+    if (!feed.loaded || feed.relaysQueried.isEmpty()) return
+
+    var expanded by remember { mutableStateOf(false) }
+
+    val gaps =
+        buildList {
+            if (feed.unreachableAuthors.isNotEmpty()) add("${feed.unreachableAuthors.size} unreachable")
+            if (feed.guessedAuthors.isNotEmpty()) add("${feed.guessedAuthors.size} guessed at")
+        }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "Asked ${feed.relaysQueried.size} " + (if (feed.relaysQueried.size == 1) "relay" else "relays") +
+                if (gaps.isEmpty()) "" else " · " + gaps.joinToString(", "),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+
+        if (expanded) {
+            Text(
+                "These servers were sent the public keys of the accounts this load wanted posts from.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            for (relay in feed.relaysQueried.sorted()) {
+                Text(
+                    relay.display(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (feed.unreachableAuthors.isNotEmpty()) {
+                Text(
+                    "Unreachable: " + feed.unreachableAuthors.joinToString(", ") { controller.displayName(it) } +
+                        " — no relay you allow carries them.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (feed.guessedAuthors.isNotEmpty()) {
+                Text(
+                    "Guessed at: " + feed.guessedAuthors.joinToString(", ") { controller.displayName(it) } +
+                        " — they publish no relay list, so their posts were looked for on the relays you allow " +
+                        "rather than where they actually post.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    HorizontalDivider()
 }
 
 // ---- header -------------------------------------------------------------

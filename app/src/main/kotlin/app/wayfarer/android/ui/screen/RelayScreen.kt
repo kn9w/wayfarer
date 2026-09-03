@@ -601,13 +601,28 @@ private fun RelayScreenFooter() {
     }
 }
 
+/**
+ * What a grant means, said in terms of what the server ends up knowing.
+ *
+ * Reading used to be described here as "nothing of yours is sent", which is
+ * false in the way that matters. Asking a relay for posts means connecting to
+ * it — it sees your IP address — and asking *by name*: the request carries the
+ * public keys of the people whose posts are wanted, which is the account's
+ * follow list, including the follows kept only on this phone. The relay-info
+ * dialog on this same screen has always said the IP part plainly; there was no
+ * reason for the standing relationship to say less than the one-off request.
+ */
 private fun permissionSummary(
     read: Boolean,
     write: Boolean,
 ): String =
     when {
-        read && write -> "Wayfarer downloads posts from here, and puts yours here too."
-        read -> "Wayfarer downloads posts from here. Nothing of yours is sent."
+        read && write ->
+            "Wayfarer asks this server for posts and puts yours here too. It sees your IP address, and " +
+                "which accounts you are reading — that is how it knows what to send back."
+        read ->
+            "Wayfarer asks this server for posts. Nothing of yours is published here, but it does see your " +
+                "IP address and which accounts you are reading, including anyone followed only on this phone."
         write -> "Your posts are sent here, but nothing is read back."
         else -> "Nothing is allowed, so this relay is not used at all."
     }

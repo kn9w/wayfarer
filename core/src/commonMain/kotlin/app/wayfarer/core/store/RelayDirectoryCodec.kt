@@ -23,10 +23,14 @@ import app.wayfarer.core.relay.RelayDirectoryStore
  * whether to allow a relay. Every caller today passes an npub or a fixed string,
  * but the field exists precisely to become more descriptive — a display name
  * taken from a kind 0, say — and a display name is written by whoever the user
- * is reading. A newline in it would close the record and let the rest parse as a
- * new line of its own choosing, including a `G` line, which is a *granted*
- * relay. So [sanitize] strips both separators from that one field: the format's
- * safety must not depend on what a future caller happens to pass.
+ * is reading. So [sanitizeField] strips tabs *and* newlines from it, and the
+ * media directory's reasons run through the same helper.
+ *
+ * Tabs alone would be enough as the grammar stands, and that is the reason not
+ * to lean on it: every record type below needs at least one tab to parse, since
+ * `decode` bails on a line with no second field, so a newline by itself cannot
+ * forge a `G` line today. That is a property of the grammar rather than of the
+ * escaping, and a single-field record type added later would end it silently.
  *
  *   G<TAB>url<TAB>read<TAB>write
  *   P<TAB>url<TAB>firstSeen<TAB>lastSeen<TAB>SOURCE:detail<TAB>SOURCE:detail…
@@ -50,7 +54,7 @@ class RelayDirectoryCodec(
             for (pending in snapshot.pending.values.sortedBy { it.url }) {
                 append("P\t").append(pending.url.url).append('\t').append(pending.firstSeenAt).append('\t').append(pending.lastSeenAt)
                 for (reason in pending.reasons) {
-                    append('\t').append(reason.source.name).append(':').append(sanitize(reason.detail))
+                    append('\t').append(reason.source.name).append(':').append(sanitizeField(reason.detail))
                 }
                 append('\n')
             }
@@ -100,16 +104,6 @@ class RelayDirectoryCodec(
             favourites = favourites,
         )
     }
-
-    /**
-     * Makes free text safe to carry in one field of one record.
-     *
-     * Both separators become spaces rather than being dropped, so the text stays
-     * readable and its length is unchanged — a relay named "a\nb" reads as
-     * "a b" rather than silently becoming "ab".
-     */
-    private fun sanitize(detail: String?): String =
-        detail.orEmpty().map { if (it == '\t' || it == '\n' || it == '\r') ' ' else it }.joinToString("")
 
     private fun decodeReason(field: String): DiscoveryReason? {
         val separator = field.indexOf(':')

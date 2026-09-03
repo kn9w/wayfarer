@@ -86,6 +86,40 @@ class MediaDirectoryCodecTest {
     }
 
     @Test
+    fun `separators in a reason never reach the encoded form`() {
+        // The reason for a queued host is built from a profile's display name,
+        // which is written by whoever the user is looking at. Whatever it
+        // contains, one queued host must encode as exactly one line, with the
+        // record's own field count intact.
+        val hostile = "avatar of Alice\nM\tevil.example\ttrue\rX\tother.example"
+        val snapshot =
+            MediaDirectorySnapshot(
+                pending =
+                    mapOf(
+                        host("maybe.example") to
+                            PendingMediaHost(
+                                host = host("maybe.example"),
+                                reasons = setOf(MediaReason(MediaSource.AVATAR, hostile)),
+                                firstSeenAt = 100,
+                                lastSeenAt = 200,
+                            ),
+                    ),
+            )
+
+        val encoded = snapshot.let(codec::encode)
+
+        assertEquals(1, encoded.trimEnd('\n').lines().size)
+        // Five fields: Q, host, firstSeen, lastSeen, and one reason. A tab that
+        // survived would make a sixth and split the reason in two.
+        assertEquals(5, encoded.trimEnd('\n').split('\t').size)
+
+        val decoded = codec.decode(encoded)
+        assertTrue(decoded.grants.isEmpty())
+        assertEquals(setOf(host("maybe.example")), decoded.pending.keys)
+        assertEquals(1, decoded.pending.getValue(host("maybe.example")).reasons.size)
+    }
+
+    @Test
     fun `a reason with no detail round-trips as no detail`() {
         val snapshot =
             MediaDirectorySnapshot(

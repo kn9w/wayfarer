@@ -13,11 +13,23 @@ import app.wayfarer.core.relay.MediaDirectoryStore
  *
  * The same hand-written format as [RelayDirectoryCodec], for the same reason:
  * this is the core module, which carries no serialization dependency, and the
- * shape is three flat record types. Fields are tab-separated and no field can
- * contain a tab — a host is validated to exclude whitespace, and the rest are
- * enum names and numbers — so no escaping is needed. Unparseable lines are
- * skipped rather than failing the load, so a field added by a later build cannot
- * lock a user out of their own settings.
+ * shape is three flat record types. Unparseable lines are skipped rather than
+ * failing the load, so a field added by a later build cannot lock a user out of
+ * their own settings.
+ *
+ * Hosts, enum names and numbers cannot contain a separator — a host is validated
+ * to exclude whitespace. One field can: a queued host's reason
+ * [MediaReason.detail] is free text, and its callers build it from a profile's
+ * display name, which is written by whoever the user is looking at. It goes
+ * through [sanitizeField], which strips tabs *and* newlines.
+ *
+ * Stripping tabs alone would happen to be enough today, and that is exactly why
+ * it is not relied on: every record type here needs at least one tab to parse —
+ * `decode` bails on any line without a second field — so a newline by itself
+ * cannot currently forge one. That is a property of this grammar, not of the
+ * escaping, and it would quietly stop holding the day a single-field record type
+ * is added. The escaping is stated here so a new record type is free to be any
+ * shape it likes.
  *
  *   M<TAB>host<TAB>load
  *   Q<TAB>host<TAB>firstSeen<TAB>lastSeen<TAB>SOURCE:detail<TAB>SOURCE:detail…
@@ -45,7 +57,7 @@ class MediaDirectoryCodec {
             for (pending in snapshot.pending.values.sortedBy { it.host }) {
                 append("Q\t").append(pending.host.host).append('\t').append(pending.firstSeenAt).append('\t').append(pending.lastSeenAt)
                 for (reason in pending.reasons) {
-                    append('\t').append(reason.source.name).append(':').append(reason.detail?.replace('\t', ' ').orEmpty())
+                    append('\t').append(reason.source.name).append(':').append(sanitizeField(reason.detail))
                 }
                 append('\n')
             }

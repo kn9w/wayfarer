@@ -712,7 +712,7 @@ class AppController(
                 notes = result?.notes.orEmpty(),
                 unreachableAuthors = result?.unreachableAuthors.orEmpty(),
                 guessedAuthors = result?.guessedAuthors.orEmpty(),
-                relaysQueried = result?.relaysQueried?.size ?: 0,
+                relaysQueried = result?.relaysQueried.orEmpty(),
                 browsingRelays = if (browsing) result?.relaysQueried.orEmpty() else emptySet(),
                 profiles = core.profiles.profiles.value,
                 loaded = true,
@@ -1497,11 +1497,28 @@ object Introduction {
         )
 }
 
+/**
+ * What the last feed load did, and what it cost.
+ *
+ * The four fields after [notes] are the load's own account of itself: which
+ * relays were asked, whose posts could not be routed anywhere, and whose were
+ * guessed at rather than routed. They are the read half of the transparency the
+ * publish report already gives writes — a published note names every relay that
+ * took it, and until now a *read* named none, though it is the read that
+ * discloses who you follow.
+ */
 data class FeedState(
     val notes: List<Note> = emptyList(),
     val unreachableAuthors: Set<PubKey> = emptySet(),
     val guessedAuthors: Set<PubKey> = emptySet(),
-    val relaysQueried: Int = 0,
+    /**
+     * The relays this load actually sent a request to.
+     *
+     * A set rather than a count: naming them is the point. These are the servers
+     * that were handed the pubkeys being asked for, so "four relays" answers a
+     * different and much weaker question than "these four".
+     */
+    val relaysQueried: Set<RelayUrl> = emptySet(),
     /**
      * Non-empty when these notes are simply what those relays are carrying,
      * rather than an outbox-routed feed of anyone's follows.

@@ -40,7 +40,11 @@ class RelayDirectoryCodecTest {
     }
 
     @Test
-    fun `a newline in a reason cannot forge a record`() {
+    fun `separators in a reason never reach the encoded form`() {
+        // Reason details are written to be descriptive, and the most descriptive
+        // thing available is a name from a profile — attacker-written text. One
+        // pending relay must encode as one line whatever it contains.
+        val hostile = "relay list of Alice\nG\twss://evil.example/\ttrue\ttrue\rD\twss://other.example/"
         val snapshot =
             RelayDirectorySnapshot(
                 pending =
@@ -48,50 +52,24 @@ class RelayDirectoryCodecTest {
                         relay("maybe.example") to
                             PendingRelay(
                                 url = relay("maybe.example"),
-                                reasons =
-                                    setOf(
-                                        // What a hostile display name would look like once
-                                        // reason details name people rather than npubs: close
-                                        // the record, then open a `G` line, which is a grant.
-                                        DiscoveryReason(
-                                            DiscoverySource.AUTHOR_RELAY_LIST,
-                                            "relay list of Alice\nG\twss://evil.example/\ttrue\ttrue",
-                                        ),
-                                    ),
+                                reasons = setOf(DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, hostile)),
                                 firstSeenAt = 100,
                                 lastSeenAt = 200,
                             ),
                     ),
             )
 
-        val decoded = codec.decode(codec.encode(snapshot))
+        val encoded = codec.encode(snapshot)
 
-        // The injected relay must not have become an approved one — the whole
-        // consent model is downstream of this map.
+        assertEquals(1, encoded.trimEnd('\n').lines().size)
+        // P, url, firstSeen, lastSeen, and one reason — a surviving tab would
+        // make a sixth field and split the reason in two.
+        assertEquals(5, encoded.trimEnd('\n').split('\t').size)
+
+        val decoded = codec.decode(encoded)
         assertTrue(decoded.grants.isEmpty())
-        assertFalse(relay("evil.example") in decoded.grants)
+        assertTrue(decoded.denied.isEmpty())
         assertEquals(setOf(relay("maybe.example")), decoded.pending.keys)
-    }
-
-    @Test
-    fun `a tab in a reason cannot forge a field`() {
-        val snapshot =
-            RelayDirectorySnapshot(
-                pending =
-                    mapOf(
-                        relay("maybe.example") to
-                            PendingRelay(
-                                url = relay("maybe.example"),
-                                reasons = setOf(DiscoveryReason(DiscoverySource.EVENT_HINT, "named\tby\tthe link")),
-                                firstSeenAt = 100,
-                                lastSeenAt = 200,
-                            ),
-                    ),
-            )
-
-        val decoded = codec.decode(codec.encode(snapshot))
-
-        // One reason in, one reason out: the tabs must not have split it into three.
         assertEquals(1, decoded.pending.getValue(relay("maybe.example")).reasons.size)
     }
 
