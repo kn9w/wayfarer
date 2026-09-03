@@ -1,6 +1,5 @@
 package app.wayfarer.android.ui.screen
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -13,10 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.stickyHeader
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +62,7 @@ import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.RelayApproval
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.shortenNpub
+import app.wayfarer.core.model.PaymentTarget
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.nostr.RelayListEntry
 
@@ -86,7 +86,7 @@ private val BannerHeight = 132.dp
  * row says only what is true, and says "found" where the count is really "what
  * arrived from the relays you allow".
  */
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     controller: AppController,
@@ -97,6 +97,8 @@ fun ProfileScreen(
     val articles by controller.articles.collectAsStateWithLifecycle()
     val offerRelayList by controller.shouldOfferRelayListPublish.collectAsStateWithLifecycle()
     val relayLists by controller.relayLists.collectAsStateWithLifecycle()
+    val loadingMore by controller.loadingMore.collectAsStateWithLifecycle()
+    val exhausted by controller.exhaustedAuthors.collectAsStateWithLifecycle()
     val isMe = account?.pubKey == pubKey
 
     val authorArticles = articles.filter { it.author == pubKey }
@@ -142,7 +144,12 @@ fun ProfileScreen(
             }
         }
 
-        stickyHeader {
+        // An ordinary item rather than a sticky header. Pinned, the tab row sat
+        // over the top of the posts it was meant to be labelling on every scroll
+        // — and the row it pins is not orientation worth a permanent strip of a
+        // phone, since the tabs are two words that scroll back into view with
+        // one flick.
+        item {
             PrimaryTabRow(
                 selectedTabIndex = tabs.indexOf(selected),
                 containerColor = MaterialTheme.colorScheme.background,
@@ -170,6 +177,15 @@ fun ProfileScreen(
                     )
                     PostDivider()
                 }
+                if (notes.isNotEmpty()) {
+                    item {
+                        LoadMoreButton(
+                            loading = loadingMore,
+                            exhausted = pubKey in exhausted,
+                            onLoadMore = { controller.loadMoreFrom(pubKey) },
+                        )
+                    }
+                }
             }
 
             ProfileTab.Articles -> {
@@ -180,6 +196,15 @@ fun ProfileScreen(
                         onOpen = { controller.go(Screen.ReadArticle(article.address)) },
                     )
                     PostDivider()
+                }
+                if (authorArticles.isNotEmpty()) {
+                    item {
+                        LoadMoreButton(
+                            loading = loadingMore,
+                            exhausted = pubKey in exhausted,
+                            onLoadMore = { controller.loadMoreFrom(pubKey) },
+                        )
+                    }
                 }
             }
 
@@ -324,13 +349,21 @@ private fun ProfileHeader(
                     pubKey = pubKey,
                     controller = controller,
                     size = AvatarSize - 6.dp,
-                    markUndecided = true,
+                    // The fix for a face that could not be pressed: with the
+                    // picture waiting on a decision, the tap is that decision.
+                    onOpenMedia = { host ->
+                        controller.openMediaHost(host, "the picture of ${controller.displayName(pubKey)}")
+                    },
                 )
             }
         }
 
         Column(
-            Modifier.padding(horizontal = PostHorizontalPadding).padding(top = AvatarSize / 2 + 8.dp, bottom = 8.dp),
+            // Eight, not half an avatar plus eight. The Box above is as tall as
+            // the avatar's *whole* height — the overhang is inside it, not below
+            // it — so padding for the overhang a second time left a band of
+            // empty background between the face and the name.
+            Modifier.padding(horizontal = PostHorizontalPadding).padding(top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             NameBlock(pubKey, profile?.displayName, profile?.name, controller)
@@ -351,10 +384,16 @@ private fun ProfileHeader(
 
             IdentityChips(
                 npub = npub,
-                lightning = profile?.lud16,
                 website = profile?.website,
                 onCopy = { clipboard.setText(AnnotatedString(it)) },
                 onShowQr = { showQr = true },
+            )
+
+            PaymentTargets(
+                pubKey = pubKey,
+                lightningAddress = profile?.lud16,
+                controller = controller,
+                onCopy = { clipboard.setText(AnnotatedString(it)) },
             )
 
             FactsRow(
@@ -367,6 +406,130 @@ private fun ProfileHeader(
 
             if (isMe) OwnProfileActions(controller) else FollowControls(pubKey, controller)
         }
+    }
+}
+
+/**
+ * "Load older posts", and the two other things it has to be able to say.
+ *
+ * A relay answers a query with its *newest* events up to a limit, so what a
+ * profile shows is as far back as one query reached rather than everything this
+ * person ever wrote — scrolling to the bottom of it found the end of a page and
+ * nothing beyond. Going further is another round of queries to somebody else's
+ * servers, which is why it is a press: on this app that is a decision, not
+ * something to spend on a thumb reaching the bottom of a list.
+ *
+ * Shared with the Global screen's Follows mode, which shows the same thing about
+ * the same person and had the same end.
+ */
+@Composable
+internal fun LoadMoreButton(
+    loading: Boolean,
+    exhausted: Boolean,
+    onLoadMore: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 12.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (exhausted) {
+            Text(
+                "That is everything the relays you allow will hand over.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            OutlinedButton(onClick = onLoadMore, enabled = !loading) {
+                Text(if (loading) "Loading…" else "Load older posts")
+            }
+        }
+    }
+}
+
+/**
+ * Where this person says they can be paid.
+ *
+ * Two sources, one list, because the difference between them is nostr's history
+ * rather than anything a reader cares about: `lud16` is a field inside the kind 0
+ * that predates any general answer, and NIP-A3's kind 10133 is that answer —
+ * `["payto", "<type>", "<address>"]`, one tag per address, any network. A person
+ * mid-migration has both, and showing them in separate places would present one
+ * person's two addresses as two different facts.
+ *
+ * Each row is the full width and truncates its own address, which is what keeps
+ * a 62-character silent-payment address from pushing the type label off the
+ * screen. Tapping copies the address in full — Wayfarer opens no wallet and
+ * hands nothing to another app, so what it can do is put the address where it
+ * can be pasted.
+ */
+@Composable
+private fun PaymentTargets(
+    pubKey: PubKey,
+    lightningAddress: String?,
+    controller: AppController,
+    onCopy: (String) -> Unit,
+) {
+    val published by controller.paymentTargets.collectAsStateWithLifecycle()
+
+    val targets =
+        remember(published[pubKey], lightningAddress) {
+            val fromEvent = published[pubKey].orEmpty()
+            // The kind 0 field first, and only when the kind 10133 does not
+            // already name it: somebody who published both should be shown one
+            // lightning address, not the same one twice.
+            val legacy =
+                lightningAddress
+                    ?.trim()
+                    ?.takeIf { address ->
+                        address.isNotEmpty() && fromEvent.none { it.type == "lightning" && it.address == address }
+                    }?.let { PaymentTarget("lightning", it) }
+            listOfNotNull(legacy) + fromEvent
+        }
+
+    if (targets.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+        for (target in targets) {
+            PaymentTargetRow(target, onCopy = { onCopy(target.address) })
+        }
+    }
+}
+
+@Composable
+private fun PaymentTargetRow(
+    target: PaymentTarget,
+    onCopy: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .clickable(onClick = onCopy)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            target.type,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.secondary,
+            maxLines = 1,
+            // Never squeezed: the type is the shorter half and the half that
+            // says what the row even is, so the address gives way instead.
+            modifier = Modifier.widthIn(max = 96.dp),
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            target.address,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -442,7 +605,6 @@ private fun Nip05Line(nip05: String) {
 @Composable
 private fun IdentityChips(
     npub: String,
-    lightning: String?,
     website: String?,
     onCopy: (String) -> Unit,
     onShowQr: () -> Unit,
@@ -461,9 +623,6 @@ private fun IdentityChips(
         IconButton(onClick = onShowQr, modifier = Modifier.size(36.dp)) {
             Icon(WayfarerIcons.Qr, contentDescription = "Show this npub as a code", modifier = Modifier.size(20.dp))
         }
-        // Parsed and editable since the profile editor was written, and never
-        // once drawn until now.
-        lightning?.let { IdentityChip(label = "⚡ $it", onClick = { onCopy(it) }) }
         website?.let { IdentityChip(label = it, onClick = { onCopy(it) }) }
     }
 }
@@ -802,9 +961,10 @@ private fun RelayListEntry.direction(): String =
 /**
  * Editing your own profile, grouped by what each field is for.
  *
- * Eight identical text fields in a column gave a lightning address the same
- * weight as a display name and left the reader to work out which of them anybody
- * else would ever see.
+ * Identical text fields in one flat column left the reader to work out which of
+ * them anybody else would ever see, so they are grouped by what each is for —
+ * and the last group publishes a second event of its own, which is the one place
+ * that grouping has to be said out loud rather than implied.
  */
 @Composable
 fun EditProfileScreen(controller: AppController) {
@@ -841,7 +1001,6 @@ fun EditProfileScreen(controller: AppController) {
             FieldGroup("Finding you") {
                 Field("NIP-05 identifier", draft.nip05) { draft = draft.copy(nip05 = it) }
                 Field("Website", draft.website) { draft = draft.copy(website = it) }
-                Field("Lightning address", draft.lud16) { draft = draft.copy(lud16 = it) }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
@@ -854,9 +1013,169 @@ fun EditProfileScreen(controller: AppController) {
                 Button(onClick = { controller.saveProfile(draft) }) { Text("Publish profile") }
                 TextButton(onClick = { controller.back() }) { Text("Cancel") }
             }
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            PaymentEditor(
+                controller = controller,
+                lightningAddress = draft.lud16,
+                onLightningAddress = { draft = draft.copy(lud16 = it) },
+            )
         }
     }
 }
+
+/**
+ * The payments half of the profile editor: a lightning address, and NIP-A3
+ * payment targets.
+ *
+ * Together, because to a reader they are one fact about a person — and apart in
+ * the one way that matters, which is that they are two different events. `lud16`
+ * is a field inside the kind 0 and goes out with Publish profile above; the
+ * payment targets are a kind 10133 of their own and have their own button. The
+ * text says which is which rather than leaving a user to discover that half of
+ * what they typed was not saved.
+ */
+@Composable
+private fun PaymentEditor(
+    controller: AppController,
+    lightningAddress: String,
+    onLightningAddress: (String) -> Unit,
+) {
+    val busy by controller.busy.collectAsStateWithLifecycle()
+    val account by controller.account.collectAsStateWithLifecycle()
+    val published by controller.paymentTargets.collectAsStateWithLifecycle()
+    val mine = account?.let { published[it.pubKey] }.orEmpty()
+
+    // Started from what is published and edited in place, and re-seeded if the
+    // kind 10133 arrives after this screen opened — which it can, since the
+    // fetch goes out with the profile load behind it.
+    //
+    // A row with both fields blank is how a new one begins, so this is a list of
+    // rows rather than of targets until it is filtered on the way out.
+    var rows by remember(mine) { mutableStateOf(mine.map { it.type to it.address }) }
+
+    FieldGroup("Getting paid") {
+        Field("Lightning address", lightningAddress, onChange = onLightningAddress)
+        Text(
+            "Part of your profile, so it goes out with the button above.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        for ((index, row) in rows.withIndex()) {
+            PaymentTargetFields(
+                type = row.first,
+                address = row.second,
+                onType = { rows = rows.replaced(index, it to row.second) },
+                onAddress = { rows = rows.replaced(index, row.first to it) },
+                onRemove = { rows = rows.filterIndexed { at, _ -> at != index } },
+            )
+        }
+
+        OutlinedButton(onClick = { rows = rows + ("" to "") }) { Text("Add an address") }
+
+        // On its own line rather than beside the button above: two buttons in a
+        // row is how a wide label starts colliding with a large font scale, and
+        // there is nothing narrow to say about either of these.
+        Button(
+            onClick = {
+                // A row is only a target once both halves are filled in. Half of
+                // one is a row still being typed, not an address to publish.
+                controller.savePaymentTargets(
+                    rows.mapNotNull { (type, address) ->
+                        val cleanType = type.trim().lowercase()
+                        val cleanAddress = address.trim()
+                        if (cleanType.isEmpty() || cleanAddress.isEmpty()) null else PaymentTarget(cleanType, cleanAddress)
+                    },
+                )
+            },
+            enabled = !busy,
+        ) { Text("Publish payment addresses") }
+
+        Text(
+            "These are a separate public note (NIP-A3) naming where you take payment, on any network — " +
+                "bitcoin, lightning, monero, a payment app. Publishing replaces the whole list, so publishing " +
+                "an empty one withdraws every address you had advertised.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * One payment target being edited: what kind of address it is, and the address.
+ *
+ * The type is a menu rather than a text field because it is not free text to the
+ * network — it decides which URI another client renders, and "Bitcoin" or
+ * "btc " would each be a target nothing recognises. A type this app does not
+ * list is still kept and still offered here, because the NIP says new ones may
+ * appear and dropping one on an edit would silently delete somebody's address.
+ */
+@Composable
+private fun PaymentTargetFields(
+    type: String,
+    address: String,
+    onType: (String) -> Unit,
+    onAddress: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val options = remember(type) { (PaymentTarget.COMMON_TYPES + type).filter { it.isNotBlank() }.distinct() }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            // Bounded at both ends, and tight-padded. A button sized to its own
+            // word would be twice as wide for "lightning" as for "nano", and on
+            // a narrow phone the address field beside it is what pays for it.
+            OutlinedButton(
+                onClick = { open = true },
+                modifier = Modifier.widthIn(min = 104.dp, max = 132.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    type.ifBlank { "Kind" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(WayfarerIcons.DropDown, contentDescription = "Choose what kind of address this is")
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (option in options) {
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = {
+                            onType(option)
+                            open = false
+                        },
+                    )
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = address,
+            onValueChange = onAddress,
+            label = { Text("Address") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+
+        IconButton(onClick = onRemove, modifier = Modifier.size(36.dp)) {
+            Icon(WayfarerIcons.Close, contentDescription = "Remove this address", modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/** [index] replaced with [value], leaving the rest alone. */
+private fun <T> List<T>.replaced(
+    index: Int,
+    value: T,
+): List<T> = mapIndexed { at, existing -> if (at == index) value else existing }
 
 @Composable
 private fun FieldGroup(

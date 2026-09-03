@@ -11,6 +11,7 @@ import app.wayfarer.core.model.MediaReason
 import app.wayfarer.core.model.MediaSource
 import app.wayfarer.core.model.NostrEvent
 import app.wayfarer.core.model.Note
+import app.wayfarer.core.model.PaymentTarget
 import app.wayfarer.core.model.Profile
 import app.wayfarer.core.model.ProfileDraft
 import app.wayfarer.core.model.PubKey
@@ -103,6 +104,19 @@ class AppController(
     private val revealedKeyState = MutableStateFlow<String?>(null)
     private val relayListPromptState = MutableStateFlow(false)
 
+    /** True while an older page of somebody's posts is being fetched. */
+    private val loadingMoreState = MutableStateFlow(false)
+
+    /**
+     * Authors whose relays have nothing older left to give.
+     *
+     * Recorded rather than inferred from a short page: a relay may return fewer
+     * events than asked for and still hold more, but a page that added nothing
+     * at all is the end of what the approved relays will hand over, and the
+     * button says so rather than sitting there doing nothing when pressed.
+     */
+    private val exhaustedAuthorsState = MutableStateFlow<Set<PubKey>>(emptySet())
+
     /**
      * Whether this user has been through the introduction before.
      *
@@ -157,6 +171,12 @@ class AppController(
     val message: StateFlow<UserMessage?> = messageState.asStateFlow()
     val feed: StateFlow<FeedState> = feedState.asStateFlow()
     val viewedProfile: StateFlow<ViewedProfile?> = viewedProfileState.asStateFlow()
+
+    /** True while "load more" is fetching an older page. */
+    val loadingMore: StateFlow<Boolean> = loadingMoreState.asStateFlow()
+
+    /** Authors with nothing older left on the relays this app may read. */
+    val exhaustedAuthors: StateFlow<Set<PubKey>> = exhaustedAuthorsState.asStateFlow()
     val articles: StateFlow<List<Article>> = articleState.asStateFlow()
 
     /** Set while the user is being asked to confirm a NIP-11 fetch. */
@@ -197,7 +217,7 @@ class AppController(
      * different questions and confusing them is the mistake the whole relay
      * screen is written to prevent.
      */
-    val media = MediaController(core, scope, { messageState.value = it })
+    val media = MediaController(core, scope, { messageState.value = it }, describe = ::displayName)
 
     /**
      * The account's public NIP-65 list, which is not the same thing as [relays]
@@ -964,9 +984,17 @@ class AppController(
     ) {
         ensureTransportStarted()
         if (asRoot) goToRoot(Screen.Profile(pubKey)) else go(Screen.Profile(pubKey))
+        // A fresh look: somebody who had nothing older last time may have posted
+        // since, and their relays may have been approved since. Either way the
+        // offer to load more comes back.
+        exhaustedAuthorsState.value = exhaustedAuthorsState.value - pubKey
         viewedProfileState.value = ViewedProfile(pubKey, core.profiles[pubKey], emptyList(), loading = true)
 
         core.profiles.load(pubKey)
+        // Where this person says they can be paid (NIP-A3). Fetched with the
+        // profile because that is the only screen that shows it, and skipped
+        // entirely for everybody whose profile is never opened.
+        core.payments.load(pubKey)
         val notes = core.feed.load(setOf(pubKey))
 
         viewedProfileState.value =
@@ -978,6 +1006,65 @@ class AppController(
                 unreachable = pubKey in notes.unreachableAuthors,
                 npub = core.bech32.encodeNpub(pubKey),
             )
+    }
+
+    /**
+     * Fetches an older page of [author]'s posts.
+     *
+     * Not a bigger limit on the same query: a relay answers a limit with its
+     * *newest* events, so asking for a hundred instead of fifty re-reads the
+     * same fifty and adds whatever the next fifty happen to be. This asks for
+     * what came before the oldest post already held, which is the only request
+     * that reaches further back — and it is a press rather than an automatic
+     * fetch at the bottom of the list, because each one is another round of
+     * queries to somebody else's servers.
+     */
+    fun loadMoreFrom(author: PubKey) {
+        if (loadingMoreState.value || author in exhaustedAuthorsState.value) return
+        scope.launch {
+            loadingMoreState.value = true
+            try {
+                val oldest = oldestHeldFor(author)
+                val result =
+                    core.feed.load(
+                        authors = setOf(author),
+                        limitPerRelay = PAGE_SIZE,
+                        // NIP-01's `until` is inclusive, so starting at the
+                        // oldest post held would spend the page re-reading it.
+                        until = oldest?.minus(1),
+                    )
+
+                if (result.added == 0) exhaustedAuthorsState.value = exhaustedAuthorsState.value + author
+
+                articleState.value = core.articles.all.value.values.sortedByDescending { it.publishedAt }
+
+                // The Global screen derives its list from the note cache and has
+                // updated itself already; the profile screen holds a snapshot.
+                val viewed = viewedProfileState.value
+                if (viewed?.pubKey == author) viewedProfileState.value = viewed.copy(notes = result.notes)
+            } catch (failure: Throwable) {
+                messageState.value = UserMessage.Error(failure.message ?: "Could not load older posts")
+            } finally {
+                loadingMoreState.value = false
+            }
+        }
+    }
+
+    /**
+     * The oldest thing held for [author], across both stores.
+     *
+     * Articles count: they arrive on the same subscription and are shown in the
+     * same profile, so paging past the oldest note while an older article sits
+     * unfetched would stop short of it.
+     */
+    private fun oldestHeldFor(author: PubKey): Long? {
+        val oldestNote = core.feed.allNotes.value.values.filter { it.author == author }.minOfOrNull { it.createdAt }
+        val oldestArticle = core.articles.all.value.values.filter { it.author == author }.minOfOrNull { it.createdAt }
+        return when {
+            oldestNote == null -> oldestArticle
+            oldestArticle == null -> oldestNote
+            else -> minOf(oldestNote, oldestArticle)
+        }
     }
 
     fun ownProfileDraft(): ProfileDraft {
@@ -999,6 +1086,27 @@ class AppController(
             }
         }
 
+    /** Every payment target list this app has seen, keyed by whose it is. */
+    val paymentTargets: StateFlow<Map<PubKey, List<PaymentTarget>>> get() = core.payments.targets
+
+    /**
+     * Publishes the account's own kind 10133.
+     *
+     * Its own action rather than part of [saveProfile], because it is its own
+     * event: a profile is a kind 0 and payment targets are a kind 10133, they
+     * replace different things on a relay, and one button doing both would be
+     * two publishes reported as one.
+     */
+    fun savePaymentTargets(targets: List<PaymentTarget>) =
+        run {
+            val me = core.accounts.account.value ?: return@run
+            val signer = core.accounts.signer ?: return@run
+            when (val result = core.payments.publish(signer, me.pubKey, targets)) {
+                is PublishResult.Success -> messageState.value = UserMessage.Published(result.report)
+                is PublishResult.Failure -> messageState.value = result.error.toMessage()
+            }
+        }
+
     fun profileFor(pubKey: PubKey): Profile? = core.profiles[pubKey]
 
     /**
@@ -1012,6 +1120,15 @@ class AppController(
     val profiles: StateFlow<Map<PubKey, Profile>> get() = core.profiles.profiles
 
     fun npubFor(pubKey: PubKey): String = core.bech32.encodeNpub(pubKey)
+
+    /**
+     * The person a bech32 entity names, or null when it names something else.
+     *
+     * For the `nostr:` references NIP-23 says an article's prose is full of: an
+     * `npub` or `nprofile` can be shown as a name, and a `note`, `nevent` or
+     * `naddr` cannot, because it is a post rather than a person.
+     */
+    fun pubKeyOf(entity: String): PubKey? = core.bech32.decodeProfileRef(entity)?.pubKey
 
     /**
      * What to call somebody on screen.
@@ -1104,6 +1221,9 @@ class AppController(
 
     /** How old a post is, against the same clock the rest of the app uses. */
     fun timeAgo(createdAt: Long): String = formatTimestamp(createdAt, core.clock.nowSeconds())
+
+    /** A calendar date, for the things that are dated rather than aged. */
+    fun dateOf(epochSeconds: Long): String = formatDate(epochSeconds)
 
     /**
      * What a reply is answering, for the line above it.
@@ -1344,6 +1464,9 @@ fun PublishError.toMessage(): UserMessage =
             UserMessage.Error("No relay is approved for posting. Approve one for posting in Relays first.")
         is PublishError.Rejected -> UserMessage.Published(report)
     }
+
+/** How many posts per relay one press of "load more" asks for. */
+private const val PAGE_SIZE = 50
 
 /** How long a burst of streamed authors is allowed to accumulate. */
 private const val PROFILE_BATCH_DELAY_MS = 2_000L

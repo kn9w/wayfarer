@@ -22,6 +22,7 @@ import app.wayfarer.core.repo.FeedRepository
 import app.wayfarer.core.repo.FollowBook
 import app.wayfarer.core.repo.LocalFollowStore
 import app.wayfarer.core.repo.OnboardingStore
+import app.wayfarer.core.repo.PaymentRepository
 import app.wayfarer.core.repo.PreferencesStore
 import app.wayfarer.core.repo.ProfileRepository
 import app.wayfarer.core.repo.RelayListRepository
@@ -82,6 +83,8 @@ class Wayfarer private constructor(
     val transport: RelayTransport,
     val accounts: AccountManager,
     val profiles: ProfileRepository,
+    /** NIP-A3 payment targets, read with a profile and published from it. */
+    val payments: PaymentRepository,
     val feed: FeedRepository,
     val articles: ArticleRepository,
     /** Conversations under a note or an article. Fetched on demand, not streamed. */
@@ -207,6 +210,7 @@ class Wayfarer private constructor(
                         signerFactory = backend.signerFactory,
                     ),
                 profiles = ProfileRepository(transport, backend.codec, router, relayListRepo, backend.clock),
+                payments = PaymentRepository(transport, backend.codec, router, relayListRepo, backend.clock),
                 feed =
                     FeedRepository(
                         transport, backend.codec, router, relayListRepo, backend.clock,

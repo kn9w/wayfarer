@@ -57,7 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.wayfarer.android.ui.Avatar
+import app.wayfarer.android.ui.PostPictures
 import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController
@@ -379,7 +379,11 @@ private fun FollowsPane(
     global: GlobalState,
     controller: AppController,
 ) {
-    if (global.person == null) {
+    val loadingMore by controller.loadingMore.collectAsStateWithLifecycle()
+    val exhausted by controller.exhaustedAuthors.collectAsStateWithLifecycle()
+
+    val person = global.person
+    if (person == null) {
         EmptyPane {
             if (global.hiddenByActivity > 0) {
                 Text("Nobody matches this filter", style = MaterialTheme.typography.titleSmall)
@@ -417,6 +421,16 @@ private fun FollowsPane(
         items(global.personPosts, key = { it.key }) { item ->
             PostBody(item, controller)
             PostDivider()
+        }
+
+        // The same end as on a profile, and for the same reason: these are this
+        // person's posts as far back as one query reached, not all of them.
+        item {
+            LoadMoreButton(
+                loading = loadingMore,
+                exhausted = person in exhausted,
+                onLoadMore = { controller.loadMoreFrom(person) },
+            )
         }
     }
 }
@@ -808,7 +822,6 @@ private fun ThreadEntryRow(
             createdAt = entry.createdAt,
             controller = controller,
             onOpenAuthor = { controller.openProfile(entry.author) },
-            avatarSize = 22.dp,
         )
         Text(entry.content, style = MaterialTheme.typography.bodySmall)
 
@@ -901,6 +914,19 @@ fun NoteRow(
             modifier = if (onOpen == null) Modifier else Modifier.fillMaxWidth().clickable(onClick = onOpen),
         )
 
+        // Nostr has no attachment: a picture in a note is a URL in the text
+        // above. Its host is already in the waiting list — every post the app
+        // takes in records the servers it points at — so this either shows the
+        // picture, for a host the reader has allowed, or names the server and
+        // leads to the decision.
+        PostPictures(
+            content = note.content,
+            controller = controller,
+            onOpenMedia = { host ->
+                controller.openMediaHost(host, "a picture in a post by ${controller.displayName(note.author)}")
+            },
+        )
+
         // Provenance: which relay actually delivered this note. Under the
         // outbox model that is a meaningful thing to be able to see.
         Text(
@@ -914,27 +940,32 @@ fun NoteRow(
     }
 }
 
-/** Who wrote it and when — the two facts every post carries. */
+/**
+ * Who wrote it and when — the two facts every post carries.
+ *
+ * A name and nothing else. There was a face here, and every one of them was a
+ * request to a server chosen by somebody else, repeated per row: forty little
+ * circles down a feed, forty fetches, and forty prompts about hosts for a reader
+ * who came to read the words. Faces and banners now live on the one screen that
+ * is actually about a person — their profile — and a byline says what it is for,
+ * which is who wrote this. Where no name is known that is their npub, shortened.
+ */
 @Composable
 internal fun PostByline(
     // The key rather than the name: every caller was passing
-    // controller.displayName(author) and the avatar needs the key anyway, so
-    // taking it here is one lookup in one place instead of five.
+    // controller.displayName(author), and the key is what opens the profile.
     author: PubKey,
     createdAt: Long,
     controller: AppController,
     onOpenAuthor: (() -> Unit)? = null,
     /** Sits after the timestamp. The overflow menu, where a post has one. */
     trailing: @Composable (() -> Unit)? = null,
-    /** Smaller inside a thread, where the rows are already indented. */
-    avatarSize: Dp = 28.dp,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(pubKey = author, controller = controller, size = avatarSize, onClick = onOpenAuthor)
         Text(
             controller.displayName(author),
             style = MaterialTheme.typography.titleSmall,

@@ -10,6 +10,7 @@ import app.wayfarer.core.repo.RelayListRepository
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -37,6 +38,55 @@ class ArticleRepositoryTest {
 
         assertEquals(setOf("30023:${alice.hex}:my-post"), articles.all.value.keys)
     }
+
+    @Test
+    fun `an edit keeps the date the article was first published`() =
+        runTest {
+            val transport = FakeTransport()
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("write.example"), read = true, write = true)
+            val articles = repo(transport = transport, directory = directory)
+            articles.absorb(articleEvent(alice, "my-post", "First", createdAt = 100, publishedAt = 100), null)
+            clock.now = 9_000
+
+            val draft = ArticleDraft.from(articles["30023:${alice.hex}:my-post"]!!)
+            articles.publish(FakeSigner(alice), alice, draft.copy(title = "Revised"))
+
+            // NIP-23: published_at is when the article first appeared, created_at
+            // is when it was last updated. Stamping both with the edit threw the
+            // article's real age away on every correction.
+            val edited = articles["30023:${alice.hex}:my-post"]!!
+            assertEquals(100, edited.publishedAt)
+            assertEquals(9_000, edited.createdAt)
+            assertTrue(edited.edited)
+        }
+
+    @Test
+    fun `an article nobody has edited does not claim to have been`() {
+        val articles = repo()
+
+        articles.absorb(articleEvent(alice, "my-post", "First", createdAt = 100, publishedAt = 100), null)
+
+        assertFalse(articles["30023:${alice.hex}:my-post"]!!.edited)
+    }
+
+    @Test
+    fun `topics survive an edit made here, even though nothing offers to change them`() =
+        runTest {
+            val transport = FakeTransport()
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("write.example"), read = true, write = true)
+            val articles = repo(transport = transport, directory = directory)
+            articles.absorb(
+                articleEvent(alice, "my-post", "First", createdAt = 100, topics = listOf("bitcoin", "essay")),
+                null,
+            )
+
+            val draft = ArticleDraft.from(articles["30023:${alice.hex}:my-post"]!!)
+            articles.publish(FakeSigner(alice), alice, draft.copy(content = "revised"))
+
+            assertEquals(listOf("bitcoin", "essay"), articles["30023:${alice.hex}:my-post"]!!.topics)
+        }
 
     @Test
     fun `a newer revision at the same address replaces the older one`() {

@@ -66,5 +66,8 @@ object EventKind {
     const val COMMENT = 1111
     const val CONTACT_LIST = 3
     const val RELAY_LIST = 10002
+
+    /** NIP-A3 payment targets: where somebody says they can be paid. */
+    const val PAYMENT_TARGETS = 10133
     const val LONG_FORM = 30023
 }

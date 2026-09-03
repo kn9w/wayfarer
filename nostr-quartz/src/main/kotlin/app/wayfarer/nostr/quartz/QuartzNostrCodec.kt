@@ -144,26 +144,46 @@ class QuartzNostrCodec : NostrCodec {
             publishedAt = article.publishedAt() ?: event.createdAt,
             content = event.content,
             createdAt = event.createdAt,
+            // Straight off the tags rather than through Quartz: NIP-23 says `t`
+            // is the topic tag and that is the whole of the format, so there is
+            // nothing here for a library to know that this does not.
+            topics = event.tagValues("t").map { it.trim() }.filter { it.isNotEmpty() }.distinct(),
         )
     }
 
+    /**
+     * Builds a kind 30023.
+     *
+     * Two things survive an edit that the event builder alone would not carry.
+     * `published_at` is NIP-23's record of when the article *first* appeared,
+     * and stamping it with the moment of the edit — which is what passing
+     * `createdAt` did — threw away the article's real age on every correction.
+     * The `t` tags are the author's topics, which this app shows but offers no
+     * way to change, and republishing an addressable event replaces the whole
+     * of it: a field not offered is a field that must not be dropped.
+     */
     override fun writeArticle(
         draft: ArticleDraft,
         createdAt: Long,
-    ): UnsignedEvent =
-        LongTextNoteEvent
-            .build(
-                description = draft.content,
-                title = draft.title,
-                summary = draft.summary.takeIf { it.isNotBlank() },
-                image = draft.image.takeIf { it.isNotBlank() },
-                publishedAt = createdAt,
-                // Quartz would otherwise mint a random UUID d tag, which for an
-                // addressable event means every edit publishes a new article
-                // instead of replacing the old one.
-                dTag = draft.dTag,
-                createdAt = createdAt,
-            ).toUnsigned()
+    ): UnsignedEvent {
+        val template =
+            LongTextNoteEvent
+                .build(
+                    description = draft.content,
+                    title = draft.title,
+                    summary = draft.summary.takeIf { it.isNotBlank() },
+                    image = draft.image.takeIf { it.isNotBlank() },
+                    publishedAt = draft.publishedAt.takeIf { it > 0 } ?: createdAt,
+                    // Quartz would otherwise mint a random UUID d tag, which for
+                    // an addressable event means every edit publishes a new
+                    // article instead of replacing the old one.
+                    dTag = draft.dTag,
+                    createdAt = createdAt,
+                ).toUnsigned()
+
+        val carried = draft.topics.map { listOf("t", it) }.filterNot { it in template.tags }
+        return if (carried.isEmpty()) template else template.copy(tags = template.tags + carried)
+    }
 
     override fun readFollows(event: NostrEvent): Set<PubKey> =
         ContactListEvent(

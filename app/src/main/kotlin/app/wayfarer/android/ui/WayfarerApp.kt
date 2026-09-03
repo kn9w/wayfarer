@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -162,6 +163,7 @@ fun WayfarerApp(
     val message by controller.message.collectAsStateWithLifecycle()
     val connected by controller.connectedRelays.collectAsStateWithLifecycle()
     val relayState by controller.relays.state.collectAsStateWithLifecycle()
+    val mediaState by controller.media.state.collectAsStateWithLifecycle()
 
     var composing by remember { mutableStateOf(false) }
 
@@ -201,6 +203,7 @@ fun WayfarerApp(
                 connected = connected.size,
                 allowed = relayState.approved.size,
                 waiting = relayState.pending.size,
+                mediaWaiting = mediaState.pending.size,
                 style = headerStyle,
                 canGoBack = canGoBack,
                 onBack = { controller.back() },
@@ -322,6 +325,8 @@ private fun AppHeader(
     connected: Int,
     allowed: Int,
     waiting: Int,
+    /** Picture servers queued for a decision. The number on the pill. */
+    mediaWaiting: Int,
     style: HeaderStyle,
     canGoBack: Boolean,
     onBack: () -> Unit,
@@ -375,8 +380,17 @@ private fun AppHeader(
             // Pictures live next to relays because they are the same kind of
             // decision — which servers may this app talk to — and these two
             // lists are the only things in the app that answer it.
-            IconButton(onClick = onMedia, modifier = Modifier.size(36.dp)) {
-                Icon(WayfarerIcons.Image, contentDescription = "Pictures")
+            //
+            // This one carries a count where the relay icon does not: the line
+            // to the left already says how many relays are waiting, and nothing
+            // anywhere says how many picture servers are. Now that the queue
+            // fills itself as you read, a pill is the only thing standing
+            // between "some hosts accumulated" and nobody ever finding out.
+            Box(contentAlignment = Alignment.TopEnd) {
+                IconButton(onClick = onMedia, modifier = Modifier.size(36.dp)) {
+                    Icon(WayfarerIcons.Image, contentDescription = "Pictures")
+                }
+                WaitingPill(mediaWaiting)
             }
 
             // No count on the icon: the line to its left already says how many
@@ -456,6 +470,28 @@ private fun Tab(
         Spacer(Modifier.height(2.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = tint)
     }
+}
+
+/**
+ * How many picture servers are waiting, as a small pill on the icon.
+ *
+ * Absent at zero rather than showing a nought: with nothing queued there is
+ * nothing to decide, and a permanent badge reading 0 is a notification about the
+ * absence of news.
+ */
+@Composable
+private fun WaitingPill(count: Int) {
+    if (count <= 0) return
+    Text(
+        if (count > 99) "99+" else "$count",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onError,
+        maxLines = 1,
+        modifier =
+            Modifier
+                .background(MaterialTheme.colorScheme.error, RoundedCornerShape(8.dp))
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }
 
 /** Green when something is connected, dim when nothing is. */

@@ -37,7 +37,87 @@ object MediaUrls {
         if (url.scheme != "https") return null
         return MediaHost.parseOrNull(url.host)
     }
+
+    /**
+     * The pictures and video a post's text points at, in the order they appear.
+     *
+     * Nostr has no attachment. An image in a note is a bare URL sitting in the
+     * note's own words, so finding one means reading the text — and reading it
+     * is all this does: no request is made, which is the point, because whether
+     * the host may be contacted at all is still an open question at this stage.
+     *
+     * Judged by file extension, which is a guess. It is the only evidence
+     * available before the request, and it errs the safe way: a link this misses
+     * is a picture not shown, while the alternative — treating every link as
+     * media — would queue a host for every URL anybody posts.
+     */
+    fun mediaIn(content: String): List<PostMedia> {
+        if (content.isEmpty()) return emptyList()
+
+        val found = LinkedHashMap<String, PostMedia>()
+        for (candidate in urlsIn(content)) {
+            val url = candidate.toHttpUrlOrNull() ?: continue
+            if (url.scheme != "https") continue
+            val extension = url.encodedPath.substringAfterLast('/', "").substringAfterLast('.', "").lowercase()
+            val video = extension in VIDEO_EXTENSIONS
+            if (!video && extension !in IMAGE_EXTENSIONS) continue
+            if (MediaHost.parseOrNull(url.host) == null) continue
+            if (candidate !in found) found[candidate] = PostMedia(candidate, video)
+        }
+        return found.values.toList()
+    }
+
+    /**
+     * Every `https://…` run in [content], with sentence punctuation trimmed off
+     * the end.
+     *
+     * Deliberately crude and deliberately narrow: `http` is not looked for at
+     * all, because a picture that would arrive in clear text is refused rather
+     * than made approvable, and there is no point queueing a host for one.
+     */
+    private fun urlsIn(content: String): List<String> {
+        val results = mutableListOf<String>()
+        var index = 0
+        while (true) {
+            val start = content.indexOf(SCHEME, index)
+            if (start < 0) break
+            // Only at a word boundary: "xhttps://" is somebody's typo.
+            val before = content.getOrNull(start - 1)
+            if (before != null && !before.isWhitespace() && before !in "([{<\"'") {
+                index = start + SCHEME.length
+                continue
+            }
+            var end = start
+            while (end < content.length && !content[end].isWhitespace() && content[end] !in "<>\"") end++
+            val raw = content.substring(start, end).trimEnd { it in TRAILING_PUNCTUATION }
+            if (raw.length > SCHEME.length) results += raw
+            index = end + 1
+        }
+        return results
+    }
+
+    private const val SCHEME = "https://"
+
+    /** Characters that end a sentence rather than a URL. */
+    private const val TRAILING_PUNCTUATION = ".,;:!?'\"\u201d\u2019)]}\u00bb"
+
+    private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "heic", "heif")
+
+    private val VIDEO_EXTENSIONS = setOf("mp4", "webm", "mov", "m4v", "mkv", "ogv")
 }
+
+/**
+ * One picture or video a post links to.
+ *
+ * [video] is carried rather than resolved because the two are shown differently
+ * and neither can be fetched to find out which it is: a video is named and left
+ * alone — Wayfarer has no player, and pretending otherwise would be a broken
+ * frame where an honest line belongs.
+ */
+data class PostMedia(
+    val url: String,
+    val video: Boolean,
+)
 
 /**
  * The media approval gate, enforced at the request.

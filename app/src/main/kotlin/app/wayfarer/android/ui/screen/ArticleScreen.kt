@@ -1,6 +1,8 @@
 package app.wayfarer.android.ui.screen
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -22,11 +25,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.viewmodel.AppController
+import app.wayfarer.android.ui.ArticleHeaderImage
+import app.wayfarer.android.ui.MarkdownBody
 import app.wayfarer.android.viewmodel.Screen
 import app.wayfarer.android.viewmodel.ThreadState
 import app.wayfarer.android.viewmodel.rootRefOfArticle
@@ -100,18 +106,29 @@ fun ReadArticleScreen(
     ) {
         Text(article.title, style = MaterialTheme.typography.headlineSmall)
         article.summary?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+        // The author's name, and only their name. The face belongs on the
+        // profile this opens, not on the byline of everything they wrote.
         Text(
             controller.displayName(article.author),
             style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.clickable { controller.openProfile(article.author) },
         )
-        Text(
-            controller.timeAgo(article.publishedAt),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        ArticleDates(article, controller)
+        ArticleTopics(article)
+
+        // The article's own header picture, where its host is allowed. Queued
+        // by the article arriving, like every other picture the app takes in.
+        ArticleHeaderImage(article = article, controller = controller)
+
+        // NIP-23 says the body is markdown, and it was on screen with the marks
+        // still in it — every `##` and `**` as the author typed them. Parsed in
+        // the core, drawn here, with the pictures it names appearing where they
+        // were written rather than gathered into a heap at the end.
+        MarkdownBody(
+            source = article.content,
+            controller = controller,
+            onOpenMedia = { host -> controller.openMediaHost(host, "a picture in \"${article.title}\"") },
         )
-        // NIP-23 bodies are markdown. Rendering it properly would mean a markdown
-        // dependency; the raw text is honest and costs nothing.
-        Text(article.content, style = MaterialTheme.typography.bodyMedium)
 
         if (account?.pubKey == article.author) {
             Button(onClick = { controller.go(Screen.EditArticle(article.address)) }) {
@@ -121,6 +138,69 @@ fun ReadArticleScreen(
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         ArticleComments(article, controller)
+    }
+}
+
+/**
+ * When the article was written, and whether it has changed since.
+ *
+ * Both, when they differ. NIP-23 is explicit about which is which — the
+ * `published_at` tag is the first publication and `created_at` is the date of
+ * the last update — and an addressable event is replaced in place, so without
+ * saying so a revision published years later reads as a new article with the
+ * original date nowhere on screen.
+ *
+ * Dates rather than ages. "3d" answers "have I seen this?", which is a feed's
+ * question; an article's is when it was written, and two of those in different
+ * units on one line would be unreadable.
+ */
+@Composable
+private fun ArticleDates(
+    article: Article,
+    controller: AppController,
+) {
+    Text(
+        buildString {
+            append("Published ")
+            append(controller.dateOf(article.publishedAt))
+            if (article.edited) {
+                append(" · updated ")
+                append(controller.dateOf(article.createdAt))
+            }
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * The article's `t` tags — what NIP-23 calls its topics.
+ *
+ * Read and shown, never edited here: republishing an addressable event replaces
+ * the whole of it, so they are carried through an edit untouched rather than
+ * being quietly dropped by a form that does not mention them.
+ */
+@Composable
+private fun ArticleTopics(article: Article) {
+    if (article.topics.isEmpty()) return
+
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (topic in article.topics) {
+            Text(
+                "#$topic",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
     }
 }
 
@@ -163,7 +243,6 @@ private fun ArticleComments(
                 createdAt = entry.createdAt,
                 controller = controller,
                 onOpenAuthor = { controller.openProfile(entry.author) },
-                avatarSize = 22.dp,
             )
             Text(entry.content, style = MaterialTheme.typography.bodyMedium)
         }

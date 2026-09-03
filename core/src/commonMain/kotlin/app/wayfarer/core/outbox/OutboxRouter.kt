@@ -90,6 +90,14 @@ class OutboxRouter(
         kinds: List<Int>,
         limitPerRelay: Int? = null,
         since: Long? = null,
+        /**
+         * Only events older than this, for paging backwards through somebody's
+         * posts. A relay answers a limit with its *newest* events, so "show me
+         * more" is a query for what came before the oldest post already held —
+         * not a bigger limit on the same query, which asks the same relay for
+         * the same events again.
+         */
+        until: Long? = null,
         connected: Set<RelayUrl> = emptySet(),
     ): ReadPlan {
         if (authors.isEmpty()) return ReadPlan(emptyMap(), emptySet())
@@ -130,6 +138,7 @@ class OutboxRouter(
                         authors = assigned.map { it.hex }.sorted(),
                         kinds = kinds,
                         since = since,
+                        until = until,
                         limit = limitPerRelay,
                     ),
                 )

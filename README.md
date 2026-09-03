@@ -15,7 +15,9 @@ explicitly approved by the user.
   `FLAG_SECURE`, so it is kept out of screenshots, screen recordings and the task switcher's
   snapshot — a lock screen in front of the key is worth little if backgrounding the app hands the
   same key to the recents thumbnail — and leaving the app puts it away again.
-- View and publish profiles, short notes, and long-form articles.
+- View and publish profiles, short notes, and long-form articles — NIP-23 markdown is rendered
+  rather than shown with its marks in, and an article says both when it was published and when it
+  was last changed.
 - **Outbox routing (NIP-65)** — notes are read from the relays their authors publish to, and
   published to your write relays plus the read relays of everyone you mention.
 - **A follow list that stays on this phone** — an alternative to the public kind 3, for people you
@@ -23,6 +25,9 @@ explicitly approved by the user.
   not invisible to *relays*: reading somebody means asking a relay for their posts by pubkey, so the
   relays you read through still learn who is on it. The Following screen says so where the two kinds
   of follow are explained.
+- **Deny-by-default picture servers** — the same rule for media. Nothing is fetched from an image
+  host you have not allowed; hosts queue themselves as you read, with the reason each was wanted,
+  and the header says how many are waiting.
 - **Deny-by-default relay permissions** — no socket opens to a relay you have not approved. Read
   and write are granted separately, and relays the app wanted are queued with the reason why. The
   permission list is local to the device: changing it publishes nothing.
@@ -99,6 +104,33 @@ Reading a relay's NIP-11 document is an HTTPS request to that relay, so it is tr
 consent: it happens only when you tap "Fetch relay info", and for a relay with no grant a dialog
 names the host first.
 
+## Pictures, and the servers they come from
+
+A picture in a post is not part of the post. It is a link to somebody's web server, and showing it
+means fetching it from there — handing that server your IP address and the fact that you are
+reading this post, now. It is a different party from the relay the post came from, and it was
+chosen by whoever wrote the post rather than by you. An app that gates relay sockets and then loads
+every avatar it is pointed at has gated the smaller half.
+
+So media hosts get their own deny-by-default list with the relay list's shape: `MediaDirectory` is
+the single authority, and `GatedImageRequests` enforces it a second time as an OkHttp interceptor —
+registered as both an application and a network interceptor, so neither the disk cache nor a
+redirect can route around it. Nothing is suggested at first run, because with no approved host the
+app still works: it draws a mark from the author's key instead of a photograph.
+
+**The queue fills itself.** Every profile, article and post the app takes in records the hosts it
+points at, with the reason each was wanted — "the picture of npub1abc…", "a picture in a post by
+alice" — so the list on the Pictures screen is one your own reading built. Pressing an undrawn
+picture does not nominate its server; it goes to the decision, because the server is already
+waiting there. The picture icon in the header carries a pill with how many are.
+
+Faces and banners appear on a person's own profile and nowhere else. A byline names its author — a
+display name, or their npub shortened — because an avatar on every row is a request to a stranger's
+server per post, forty of them down a feed, for a reader who came to read the words.
+
+Video is queued and decided about like anything else and then named rather than played: Wayfarer
+has no player, and an honest line beats a frame that never starts.
+
 ## Outbox
 
 - Read an author's events from their advertised *write* relays; each relay is asked only for the
@@ -114,23 +146,21 @@ names the host first.
 
 | NIP | What | Extent |
 |---|---|---|
-| [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified before it is stored — notes, articles and thread comments, and equally the kinds that steer the app: profiles (0), follow lists (3) and relay lists (10002). |
+| [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified before it is stored — notes, articles and thread comments, and equally the kinds that steer the app: profiles (0), follow lists (3), relay lists (10002) and payment targets (10133). |
 | [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. Verified before use. |
 | [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. No thread view. |
 | [11](https://github.com/nostr-protocol/nips/blob/master/11.md) | Relay information | Fetched on explicit request; shows supported NIPs, software, auth/payment requirements, posting policy. |
 | [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode **with its relay hints kept**, `note` encode. Hints are offered for approval, never used on the strength of the link alone. |
 | [21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URIs | Accepted wherever a key is parsed, and when scanning notes for mentions. |
-| [23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content (kind 30023) | Read and authoring. Addressable: the `d` tag is preserved across edits so a revision replaces rather than duplicates. Markdown bodies render as plain text. |
+| [23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content (kind 30023) | Read and authoring, with the markdown rendered — headings, emphasis, code, quotes, lists, and pictures where the author put them. Addressable: `d`, `published_at` and the `t` topics are all preserved across an edit, so a revision replaces rather than duplicates and keeps the date the article first appeared. Soft wraps are reflowed, as the NIP requires of anyone writing one. |
 | [55](https://github.com/nostr-protocol/nips/blob/master/55.md) | Android signer application | Intent transport only (`get_public_key`, `sign_event`). The Content Resolver transport exists for background signing, which this app never does. |
+| [57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Zaps | The address only. A profile's `lud16` is read, shown and editable, alongside the NIP-A3 targets below it. Nothing here requests an invoice or pays one — the app publishes where you take payment, and leaves paying to a wallet. |
 | [65](https://github.com/nostr-protocol/nips/blob/master/65.md) | Relay list metadata (kind 10002) | Full, and central. Read for every author routed to. Your own is edited and published on its own screen, reached from your profile — read and write markers per relay, replacing the previous list. |
+| [A3](https://github.com/nostr-protocol/nips/blob/master/A3.md) | Payment targets (kind 10133) | Full. `payto` tags read for any type, including ones this app has never heard of, and shown on the profile beside the lightning address. Your own list is edited there and published as its own replaceable event. |
 
 Planned: **NIP-46** (remote `bunker://` signing). Quartz already provides the client, and it would
 be a second `EventSigner` — but a bunker URI carries relay URLs, so those relays have to go through
 the approval gate like any other.
-
-Not implemented: NIP-42 (relay auth — so auth-gated relays will refuse reads), NIP-05 verification,
-NIP-04/17/59 (direct messages), NIP-25 (reactions), NIP-18 (reposts), NIP-57 (zaps), NIP-09
-(deletions), NIP-50 (search), NIP-51 (lists), NIP-77 (negentropy).
 
 ## What is used from Quartz
 
@@ -167,7 +197,10 @@ backend would cut the dependency list to a schnorr implementation and a websocke
 Beyond Quartz the app adds Compose, androidx activity/lifecycle/core-ktx, OkHttp, and — for the QR
 scanner alone — CameraX and `com.google.zxing:core`, a pure-Java decoder with no transitive
 dependencies of its own. There is no navigation library, image loader, DI framework, markdown
-renderer, or JSON library in `core`.
+library, or JSON library in `core`. The last three are written here instead, each because the whole
+need is small and the alternative brings its own network, its own cache or its own parser: the
+image loader is one page with one HTTP call in it, and the markdown reader handles what a NIP-23
+article uses and leaves anything else as the author's own text.
 
 The account key is encrypted with an `AndroidKeyStore` AES-GCM key in about sixty lines of standard
 JCA rather than depending on the deprecated `androidx.security:security-crypto`, and showing it

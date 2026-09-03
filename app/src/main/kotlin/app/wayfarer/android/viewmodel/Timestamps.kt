@@ -45,6 +45,23 @@ fun formatTimestamp(
 }
 
 /**
+ * A date, always, however recent it is.
+ *
+ * [formatTimestamp] answers "did I already see this?", which is the question a
+ * feed asks. An article asks a different one — when was this written, and has it
+ * changed since — and "3d" beside "1 Feb 2024" would be two answers in two
+ * units on one line.
+ */
+fun formatDate(
+    epochSeconds: Long,
+    zone: ZoneId = ZoneId.systemDefault(),
+    locale: Locale = Locale.getDefault(),
+): String =
+    DateTimeFormatter
+        .ofPattern(ABSOLUTE_PATTERN, locale)
+        .format(Instant.ofEpochSecond(epochSeconds).atZone(zone))
+
+/**
  * A pubkey as a person can read it: shortened, and always bech32.
  *
  * Never hex. An npub is the only form of a key anyone recognises or can paste

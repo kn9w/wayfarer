@@ -16,18 +16,40 @@ data class Article(
     val title: String,
     val summary: String?,
     val image: String?,
-    /** Author-declared publication time. Falls back to [createdAt] when absent. */
+    /**
+     * When this article was *first* published — NIP-23's `published_at`.
+     *
+     * Distinct from [createdAt], which the same NIP defines as the date of the
+     * last update: an addressable event is replaced in place, so the only record
+     * that an article predates its newest revision is this tag. Falls back to
+     * [createdAt] when the author's client never wrote one, which reads as
+     * "never edited" and is the best available answer.
+     */
     val publishedAt: Long,
-    /** Markdown body, per NIP-23. Rendered as plain text here. */
+    /** Markdown body, per NIP-23. Parsed by `app.wayfarer.core.text.Markdown`. */
     val content: String,
     val createdAt: Long,
+    /** NIP-23 `t` tags: what the article is about, in the author's words. */
+    val topics: List<String> = emptyList(),
     val seenOn: Set<RelayUrl> = emptySet(),
 ) {
     /** `30023:<pubkey>:<dTag>` — the NIP-01 address that identifies this article. */
     val address: String get() = "${EventKind.LONG_FORM}:${author.hex}:$dTag"
 
+    /**
+     * True when this is a revision rather than the original.
+     *
+     * A minute of slack, because `published_at` and `created_at` are written by
+     * the same client in the same breath on a first publish and need not land on
+     * the same second.
+     */
+    val edited: Boolean get() = createdAt - publishedAt > EDIT_TOLERANCE_SECONDS
+
     fun mergeSeenOn(more: Set<RelayUrl>) = if (more.all { it in seenOn }) this else copy(seenOn = seenOn + more)
 }
+
+/** How far apart the two timestamps may be before one counts as an edit. */
+private const val EDIT_TOLERANCE_SECONDS = 60L
 
 /** The editable fields, as the article form submits them. */
 data class ArticleDraft(
@@ -41,6 +63,23 @@ data class ArticleDraft(
      * instead of creating a new one.
      */
     val dTag: String = "",
+    /**
+     * The original publication time, carried through an edit.
+     *
+     * Zero for a new article, which the codec reads as "now". Without this a
+     * revision published from here would stamp `published_at` with the moment of
+     * the edit, which is the one thing that tag exists not to say — and it would
+     * take the article's real age with it.
+     */
+    val publishedAt: Long = 0,
+    /**
+     * The article's `t` tags, carried through an edit untouched.
+     *
+     * Not editable here, and kept for the same reason a profile's payment
+     * fields are: republishing an addressable event replaces the whole of it, so
+     * a field this app does not offer to change is a field it must not drop.
+     */
+    val topics: List<String> = emptyList(),
 ) {
     companion object {
         fun from(article: Article) =
@@ -50,6 +89,8 @@ data class ArticleDraft(
                 image = article.image.orEmpty(),
                 content = article.content,
                 dTag = article.dTag,
+                publishedAt = article.publishedAt,
+                topics = article.topics,
             )
     }
 }

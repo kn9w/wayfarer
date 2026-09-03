@@ -126,7 +126,21 @@ class FakeTransport(
 class FakeCodec(
     private val verifies: Boolean = true,
 ) : NostrCodec {
-    override fun readProfile(event: NostrEvent): Profile? = Profile(event.pubKey, name = event.content)
+    /**
+     * Name from the content, pictures from tags.
+     *
+     * Real kind 0 content is JSON, which this module has no parser for. Tags are
+     * the one place a fixture can put a picture URL without one, and something
+     * has to carry it: the media queue is filled from profiles as they arrive,
+     * and a codec that dropped every picture would make that untestable.
+     */
+    override fun readProfile(event: NostrEvent): Profile? =
+        Profile(
+            pubKey = event.pubKey,
+            name = event.content,
+            picture = event.tagRows("picture").firstOrNull()?.getOrNull(1),
+            banner = event.tagRows("banner").firstOrNull()?.getOrNull(1),
+        )
 
     override fun writeProfile(
         previous: NostrEvent?,
@@ -159,6 +173,7 @@ class FakeCodec(
             publishedAt = event.tagValues("published_at").firstOrNull()?.toLongOrNull() ?: event.createdAt,
             content = event.content,
             createdAt = event.createdAt,
+            topics = event.tagValues("t"),
         )
     }
 
@@ -168,7 +183,12 @@ class FakeCodec(
     ) = UnsignedEvent(
         kind = EventKind.LONG_FORM,
         content = draft.content,
-        tags = listOf(listOf("d", draft.dTag), listOf("title", draft.title)),
+        tags =
+            listOf(
+                listOf("d", draft.dTag),
+                listOf("title", draft.title),
+                listOf("published_at", (draft.publishedAt.takeIf { it > 0 } ?: createdAt).toString()),
+            ) + draft.topics.map { listOf("t", it) },
         createdAt = createdAt,
     )
 
@@ -242,6 +262,42 @@ fun contactEvent(
     sig = "0".repeat(128),
 )
 
+/** Builds a kind 0 the way [FakeCodec] reads it: name in content, pictures in tags. */
+fun profileEvent(
+    author: PubKey,
+    name: String,
+    picture: String? = null,
+    banner: String? = null,
+    createdAt: Long = 1,
+) = NostrEvent(
+    id = EventId("f".repeat(64)),
+    pubKey = author,
+    createdAt = createdAt,
+    kind = EventKind.METADATA,
+    tags =
+        listOfNotNull(
+            picture?.let { listOf("picture", it) },
+            banner?.let { listOf("banner", it) },
+        ),
+    content = name,
+    sig = "0".repeat(128),
+)
+
+/** Builds a NIP-A3 kind 10133 carrying [targets] as `payto` tags. */
+fun paymentEvent(
+    author: PubKey,
+    vararg targets: Pair<String, String>,
+    createdAt: Long = 1,
+) = NostrEvent(
+    id = EventId("a3".repeat(32)),
+    pubKey = author,
+    createdAt = createdAt,
+    kind = EventKind.PAYMENT_TARGETS,
+    tags = targets.map { (type, address) -> listOf("payto", type, address) },
+    content = "",
+    sig = "0".repeat(128),
+)
+
 /** Builds a long-form event the way [FakeCodec] reads it. */
 fun articleEvent(
     author: PubKey,
@@ -249,13 +305,19 @@ fun articleEvent(
     title: String,
     createdAt: Long,
     idSeed: Int = createdAt.toInt(),
+    publishedAt: Long? = null,
+    topics: List<String> = emptyList(),
+    content: String = "body of $title",
 ) = NostrEvent(
     id = EventId(idSeed.toString(16).padStart(2, '0').repeat(32).take(64)),
     pubKey = author,
     createdAt = createdAt,
     kind = EventKind.LONG_FORM,
-    tags = listOf(listOf("d", dTag), listOf("title", title)),
-    content = "body of $title",
+    tags =
+        listOf(listOf("d", dTag), listOf("title", title)) +
+            listOfNotNull(publishedAt?.let { listOf("published_at", it.toString()) }) +
+            topics.map { listOf("t", it) },
+    content = content,
     sig = "0".repeat(128),
 )
 

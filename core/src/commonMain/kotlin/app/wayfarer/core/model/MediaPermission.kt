@@ -84,6 +84,14 @@ enum class MediaSource {
     /** A NIP-23 article's header image. */
     ARTICLE_IMAGE,
 
+    /**
+     * A picture or video linked from the text of a note or an article.
+     *
+     * Nostr has no attachment: a picture in a post is a bare URL in the post's
+     * own words, so this is every image anybody you read chose to embed.
+     */
+    POST_IMAGE,
+
     /** Typed in by the user on the media screen. */
     USER_ENTERED,
 }
@@ -110,7 +118,20 @@ data class PendingMediaHost(
     fun merge(
         newReasons: Set<MediaReason>,
         now: Long,
-    ) = copy(reasons = reasons + newReasons, lastSeenAt = now)
+    ) = copy(reasons = (reasons + newReasons).take(MAX_REASONS).toSet(), lastSeenAt = now)
+
+    private companion object {
+        /**
+         * How many reasons are kept for one host.
+         *
+         * A cap rather than the lot, now that the queue fills itself as posts
+         * arrive: a popular image host is named by every third note in a feed,
+         * and the reasons are persisted. The first few answer "why is this
+         * here?", which is all they are for; keeping every one would grow the
+         * settings file without bound while telling the reader nothing new.
+         */
+        const val MAX_REASONS = 8
+    }
 }
 
 /** The full persisted state of the media permission system. */

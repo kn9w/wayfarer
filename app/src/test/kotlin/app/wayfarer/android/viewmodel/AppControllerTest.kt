@@ -12,9 +12,13 @@ import app.wayfarer.core.UnusedRelayInfoFetcher
 import app.wayfarer.core.Wayfarer
 import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.EventKind
+import app.wayfarer.core.model.MediaSource
+import app.wayfarer.core.model.PaymentTarget
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.noteEvent
+import app.wayfarer.core.profileEvent
+import app.wayfarer.core.paymentEvent
 import app.wayfarer.core.pubKey
 import app.wayfarer.core.relay
 import app.wayfarer.core.repo.Credential
@@ -909,6 +913,178 @@ class AppControllerTest {
             runCurrent()
 
             assertTrue(core.relayDirectory.grants.containsKey(RelayUrl("wss://scanned.example/")))
+        }
+
+    // ---- pictures, and the servers they would come from --------------------
+
+    @Test
+    fun `a profile's picture queues its server as the profile arrives`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            core.profiles.absorb(profileEvent(pubKey, "somebody", picture = "https://cdn.example.com/a.png"))
+            runCurrent()
+
+            // The complaint this answers: hosts used to reach the queue only when
+            // somebody pressed the badge on a picture that had not loaded, so a
+            // reader who never pressed one had an empty list and no pictures.
+            assertEquals(
+                listOf("cdn.example.com"),
+                controller.media.state.value.pending.map { it.host.display() },
+            )
+        }
+
+    @Test
+    fun `a picture linked from a post queues its server too`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            core.feed.absorb(
+                noteEvent(pubKey, "look at this https://img.example.com/cat.jpg", createdAt = 400, idSeed = 21),
+                null,
+            )
+            runCurrent()
+
+            val pending = controller.media.state.value.pending
+            assertEquals(listOf("img.example.com"), pending.map { it.host.display() })
+            // The reason is the whole decision: a bare host is not a question
+            // anybody can answer.
+            assertTrue(pending.first().reasons.any { it.source == MediaSource.POST_IMAGE }, "$pending")
+        }
+
+    @Test
+    fun `queueing a host is not contacting it`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            core.profiles.absorb(profileEvent(pubKey, "somebody", picture = "https://cdn.example.com/a.png"))
+            runCurrent()
+
+            val host = controller.media.state.value.pending.first().host
+            assertFalse(core.mediaDirectory.isApproved(host), "a queued host must have no grant")
+        }
+
+    @Test
+    fun `a picture over plain http is refused rather than offered as a decision`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            core.profiles.absorb(profileEvent(pubKey, "somebody", picture = "http://cdn.example.com/a.png"))
+            runCurrent()
+
+            assertTrue(controller.media.state.value.pending.isEmpty())
+        }
+
+    // ---- payment targets (NIP-A3) ------------------------------------------
+
+    @Test
+    fun `somebody's payment addresses are read from their kind 10133`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            core.payments.absorb(paymentEvent(pubKey, "bitcoin" to "bc1qxq", "lightning" to "alice@example.com"))
+            runCurrent()
+
+            assertEquals(
+                listOf(PaymentTarget("bitcoin", "bc1qxq"), PaymentTarget("lightning", "alice@example.com")),
+                controller.paymentTargets.value[pubKey],
+            )
+        }
+
+    @Test
+    fun `publishing payment addresses is its own event, not part of the profile`() =
+        runTest {
+            val core = wayfarer()
+            core.relayDirectory.approve(relay("write.example"), read = true, write = true)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            controller.createAccount()
+            runCurrent()
+            transport.published.clear()
+
+            controller.savePaymentTargets(listOf(PaymentTarget("monero", "4Aabc")))
+            runCurrent()
+
+            val published = transport.published.single().first
+            assertEquals(EventKind.PAYMENT_TARGETS, published.kind)
+            assertEquals(listOf(listOf("payto", "monero", "4Aabc")), published.tags)
+        }
+
+    // ---- paging past the first page ---------------------------------------
+
+    /**
+     * The bug this covers: a relay answers a query with its *newest* events up
+     * to the limit, so a profile showed one page and had no way to reach what
+     * came before it however far the reader scrolled.
+     */
+    @Test
+    fun `loading more asks for what came before the oldest post held`() =
+        runTest {
+            val core = wayfarer()
+            core.relayDirectory.approve(relay("open.example"), read = true, write = false)
+            core.feed.absorb(noteEvent(pubKey, "older", createdAt = 400, idSeed = 31), null)
+            core.feed.absorb(noteEvent(pubKey, "newer", createdAt = 900, idSeed = 32), null)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            transport.fetched.clear()
+
+            controller.loadMoreFrom(pubKey)
+            runCurrent()
+
+            val filter = transport.fetched.last().values.first().first()
+            // 399, not 400: NIP-01's `until` is inclusive, so starting at the
+            // oldest post held would spend the whole page re-reading it.
+            assertEquals(399, filter.until)
+            assertEquals(listOf(pubKey.hex), filter.authors)
+        }
+
+    @Test
+    fun `a page that brings nothing back retires the load more button`() =
+        runTest {
+            val core = wayfarer()
+            core.relayDirectory.approve(relay("open.example"), read = true, write = false)
+            core.feed.absorb(noteEvent(pubKey, "the only one", createdAt = 400, idSeed = 33), null)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+
+            controller.loadMoreFrom(pubKey)
+            runCurrent()
+
+            assertTrue(pubKey in controller.exhaustedAuthors.value)
+
+            // And it stops asking: another press would be a fresh round of
+            // queries to somebody else's relays for an answer already given.
+            transport.fetched.clear()
+            controller.loadMoreFrom(pubKey)
+            runCurrent()
+            assertTrue(transport.fetched.isEmpty())
+        }
+
+    @Test
+    fun `opening a profile again offers to load more, in case they have posted since`() =
+        runTest {
+            val core = wayfarer()
+            core.relayDirectory.approve(relay("open.example"), read = true, write = false)
+            core.feed.absorb(noteEvent(pubKey, "the only one", createdAt = 400, idSeed = 34), null)
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            controller.loadMoreFrom(pubKey)
+            runCurrent()
+
+            controller.openProfile(pubKey)
+            runCurrent()
+
+            assertFalse(pubKey in controller.exhaustedAuthors.value)
         }
 
     // ---- relay permissions ------------------------------------------------

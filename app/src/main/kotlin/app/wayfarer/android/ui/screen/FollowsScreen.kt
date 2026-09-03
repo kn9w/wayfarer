@@ -22,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.wayfarer.android.ui.Avatar
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.repo.FollowSource
@@ -99,7 +98,9 @@ private fun FollowRow(
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Avatar(pubKey = person, controller = controller, size = 36.dp)
+        // No face here either: a picture belongs on the profile this row opens,
+        // and a list of forty follows is forty requests to servers the reader
+        // has not been asked about yet.
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(controller.displayName(person), style = MaterialTheme.typography.titleSmall)
             Text(

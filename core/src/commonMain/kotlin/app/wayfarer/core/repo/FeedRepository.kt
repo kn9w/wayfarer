@@ -68,6 +68,15 @@ class FeedRepository(
         /** Authors with no relay list, fetched from approved relays as a guess. */
         val guessedAuthors: Set<PubKey>,
         val relaysQueried: Set<RelayUrl>,
+        /**
+         * Posts this load actually added, as opposed to re-read.
+         *
+         * [notes] is everything held for those authors, which is what a screen
+         * wants to render but says nothing about whether asking again achieved
+         * anything. Zero here is how "load more" knows it has reached the end of
+         * what the approved relays will hand over.
+         */
+        val added: Int = 0,
     )
 
     /**
@@ -78,6 +87,12 @@ class FeedRepository(
         authors: Set<PubKey>,
         limitPerRelay: Int = 50,
         since: Long? = null,
+        /**
+         * Only posts older than this. What "load more" is: the newest
+         * [limitPerRelay] posts from before the oldest one already held, rather
+         * than the same newest page fetched again with a bigger number on it.
+         */
+        until: Long? = null,
     ): LoadResult {
         if (authors.isEmpty()) return LoadResult(emptyList(), emptySet(), emptySet(), emptySet())
 
@@ -89,19 +104,32 @@ class FeedRepository(
                 kinds = FEED_KINDS,
                 limitPerRelay = limitPerRelay,
                 since = since,
+                until = until,
                 connected = transport.connected.value,
             )
         if (readPlan.isEmpty) {
             return LoadResult(emptyList(), readPlan.unreachable, readPlan.guessed, emptySet())
         }
 
+        // Articles ride the same subscription, so a page that brought only
+        // long-form counts as progress too — a profile made up of articles would
+        // otherwise report itself exhausted on the first press.
+        fun held() = notes.value.size + (articles?.all?.value?.size ?: 0)
+
+        val before = held()
         for (received in transport.fetch(readPlan.plan)) {
             absorb(received.event, received.relay)
             articles?.absorb(received.event, received.relay)
         }
 
         val loaded = notes.value.values.filter { it.author in authors }.sortedByDescending { it.createdAt }
-        return LoadResult(loaded, readPlan.unreachable, readPlan.guessed, readPlan.plan.keys)
+        return LoadResult(
+            notes = loaded,
+            unreachableAuthors = readPlan.unreachable,
+            guessedAuthors = readPlan.guessed,
+            relaysQueried = readPlan.plan.keys,
+            added = held() - before,
+        )
     }
 
     /**

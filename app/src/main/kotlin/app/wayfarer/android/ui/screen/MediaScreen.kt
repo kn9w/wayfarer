@@ -451,6 +451,7 @@ private fun MediaReason.describe(): String {
             MediaSource.AVATAR -> "somebody's profile picture"
             MediaSource.BANNER -> "a profile banner"
             MediaSource.ARTICLE_IMAGE -> "an article's header image"
+            MediaSource.POST_IMAGE -> "a picture in a post"
             MediaSource.USER_ENTERED -> "you added it here"
         }
     return detail?.let { "$what — $it" } ?: what
