@@ -128,8 +128,34 @@ Faces and banners appear on a person's own profile and nowhere else. A byline na
 display name, or their npub shortened — because an avatar on every row is a request to a stranger's
 server per post, forty of them down a feed, for a reader who came to read the words.
 
+**A picture that is drawn can be opened.** Tapping one fills the window, pinch-zooms to six times
+its fitted size and pans while zoomed; the fetch is the same gated `ImageLoader` call the small
+version made, so opening a picture cannot reach a host the small one could not. A video from an
+allowed host plays full-window in the platform's own `VideoView` — no media dependency, and never
+started by scrolling past it: the still carries a play button, and the tap is the request. A video
+whose host is undecided is still only named, with the badge that leads to that decision.
+
 Video is queued and decided about like anything else and then named rather than played: Wayfarer
 has no player, and an honest line beats a frame that never starts.
+
+## Two colours
+
+Every action in this app is one of two things, and which one it is matters more than anything else
+on the screen it sits on: it either signs something and hands it to other people's servers, or it
+changes a list that never leaves this phone. The app said so in prose on every screen and then drew
+both in the same blue, so the distinction it is built around was the one thing you had to read a
+paragraph to learn.
+
+**Moss green is public. Trail brown is local.** Following publicly, replying, publishing a note, an
+article, a profile, a relay list or a payment address are green. Allowing a relay, allowing a
+picture server, following on this phone, and the connection dot are brown. The two tabs are the same
+pair, because Global and Local *are* the distinction. They live in `Theme.kt` as `publicAccent` and
+`localAccent` — aliases over the palette's tertiary and secondary — so a screen names the meaning
+rather than the colour.
+
+Colour is never the only signal. The wording still says what happens, the relay and picture screens
+keep their glyphs, and the coverage badge on a profile carries a tick, a half-tick or a cross —
+because green against brown is precisely the pair a red-green colour-blind reader separates worst.
 
 ## Outbox
 
@@ -148,13 +174,13 @@ has no player, and an honest line beats a frame that never starts.
 |---|---|---|
 | [01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Events, ids, signatures, `REQ`/`EVENT`/`EOSE`/`OK`/`CLOSED`, filters | Full for the kinds used. Every incoming event is id- and signature-verified before it is stored — notes, articles and thread comments, and equally the kinds that steer the app: profiles (0), follow lists (3), relay lists (10002) and payment targets (10133). |
 | [02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Follow list (kind 3) | Read only; drives whose notes the feed asks for. Verified before use. |
-| [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. No thread view. |
+| [10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Threading | Reply targets parsed from marked `e` tags with positional fallback. A conversation is read by its root: replies of both conventions, plus the post they answer, fetched by id so a thread opened from a reply has a beginning. |
 | [11](https://github.com/nostr-protocol/nips/blob/master/11.md) | Relay information | Fetched on explicit request; shows supported NIPs, software, auth/payment requirements, posting policy. |
 | [19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32 entities | `npub`/`nsec` encode and decode, `nprofile` decode **with its relay hints kept**, `note` encode. Hints are offered for approval, never used on the strength of the link alone. |
-| [21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URIs | Accepted wherever a key is parsed, and when scanning notes for mentions. |
+| [21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URIs | Accepted wherever a key is parsed, and when scanning notes for mentions. Written, too: "Copy event id" puts `nostr:note1…` on the clipboard rather than bare hex, because that is the form another client can resolve. |
 | [23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content (kind 30023) | Read and authoring, with the markdown rendered — headings, emphasis, code, quotes, lists, and pictures where the author put them. Addressable: `d`, `published_at` and the `t` topics are all preserved across an edit, so a revision replaces rather than duplicates and keeps the date the article first appeared. Soft wraps are reflowed, as the NIP requires of anyone writing one. |
 | [55](https://github.com/nostr-protocol/nips/blob/master/55.md) | Android signer application | Intent transport only (`get_public_key`, `sign_event`). The Content Resolver transport exists for background signing, which this app never does. |
-| [57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Zaps | The address only. A profile's `lud16` is read, shown and editable, alongside the NIP-A3 targets below it. Nothing here requests an invoice or pays one — the app publishes where you take payment, and leaves paying to a wallet. |
+| [57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Zaps | The address only. A profile's `lud16` is read, shown, and edited in the profile form with the website — it is a field of the kind 0, so it publishes with it, which is what keeps it out of the separate NIP-A3 section below. Nothing here requests an invoice or pays one — the app publishes where you take payment, and leaves paying to a wallet. |
 | [65](https://github.com/nostr-protocol/nips/blob/master/65.md) | Relay list metadata (kind 10002) | Full, and central. Read for every author routed to. Your own is edited and published on its own screen, reached from your profile — read and write markers per relay, replacing the previous list. |
 | [A3](https://github.com/nostr-protocol/nips/blob/master/A3.md) | Payment targets (kind 10133) | Full. `payto` tags read for any type, including ones this app has never heard of, and shown on the profile beside the lightning address. Your own list is edited there and published as its own replaceable event. |
 

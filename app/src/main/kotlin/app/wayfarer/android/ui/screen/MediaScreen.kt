@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.localButtonColors
+import app.wayfarer.android.ui.theme.localOutlinedButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.MediaScreenState
 import app.wayfarer.core.model.MediaHost
@@ -326,7 +328,7 @@ private fun NoMediaMatch(
         when {
             trimmed.isNotEmpty() -> {
                 Text("No server here matches “$trimmed”.", style = MaterialTheme.typography.bodyMedium)
-                OutlinedButton(onClick = onAdd) { Text("Add $trimmed to the list") }
+                OutlinedButton(onClick = onAdd, colors = localOutlinedButtonColors()) { Text("Add $trimmed to the list") }
                 Text(
                     "Adding it only puts it in front of you to decide about. Nothing is loaded until you allow it.",
                     style = MaterialTheme.typography.bodySmall,
@@ -387,28 +389,42 @@ private fun MediaDetailSheet(
                 style = MaterialTheme.typography.bodySmall,
             )
 
+            // Trail throughout, like the relay screen: this list lives on this
+            // phone, and answering any of these publishes nothing.
             when (row.status) {
                 MediaStatus.Allowed -> {
-                    OutlinedButton(onClick = {
-                        onRevoke()
-                        onDismiss()
-                    }) { Text("Stop showing pictures from here") }
+                    OutlinedButton(
+                        onClick = {
+                            onRevoke()
+                            onDismiss()
+                        },
+                        colors = localOutlinedButtonColors(),
+                    ) { Text("Stop showing pictures from here") }
                 }
                 MediaStatus.Waiting -> {
-                    Button(onClick = {
-                        onAllow()
-                        onDismiss()
-                    }) { Text("Show pictures from this server") }
-                    OutlinedButton(onClick = {
-                        onDeny()
-                        onDismiss()
-                    }) { Text("Never load from here") }
+                    Button(
+                        onClick = {
+                            onAllow()
+                            onDismiss()
+                        },
+                        colors = localButtonColors(),
+                    ) { Text("Show pictures from this server") }
+                    OutlinedButton(
+                        onClick = {
+                            onDeny()
+                            onDismiss()
+                        },
+                        colors = localOutlinedButtonColors(),
+                    ) { Text("Never load from here") }
                 }
                 MediaStatus.Blocked -> {
-                    OutlinedButton(onClick = {
-                        onForget()
-                        onDismiss()
-                    }) { Text("Unblock") }
+                    OutlinedButton(
+                        onClick = {
+                            onForget()
+                            onDismiss()
+                        },
+                        colors = localOutlinedButtonColors(),
+                    ) { Text("Unblock") }
                 }
             }
 

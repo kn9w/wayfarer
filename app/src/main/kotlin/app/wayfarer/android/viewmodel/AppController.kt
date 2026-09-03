@@ -107,6 +107,9 @@ class AppController(
     /** True while an older page of somebody's posts is being fetched. */
     private val loadingMoreState = MutableStateFlow(false)
 
+    /** True while the profile on screen is being re-read, for its own indicator. */
+    private val refreshingProfileState = MutableStateFlow(false)
+
     /**
      * Authors whose relays have nothing older left to give.
      *
@@ -174,6 +177,14 @@ class AppController(
 
     /** True while "load more" is fetching an older page. */
     val loadingMore: StateFlow<Boolean> = loadingMoreState.asStateFlow()
+
+    /**
+     * True while a profile is being re-read because somebody pulled it down.
+     *
+     * Separate from [refreshing], which belongs to the feed: the two indicators
+     * are on different screens and a pull on one must not spin the other.
+     */
+    val refreshingProfile: StateFlow<Boolean> = refreshingProfileState.asStateFlow()
 
     /** Authors with nothing older left on the relays this app may read. */
     val exhaustedAuthors: StateFlow<Set<PubKey>> = exhaustedAuthorsState.asStateFlow()
@@ -982,8 +993,55 @@ class AppController(
         pubKey: PubKey,
         asRoot: Boolean = false,
     ) {
-        ensureTransportStarted()
+        // The slot is claimed before anything suspends, so the screen that
+        // composes on the very next frame already knows who it is about and
+        // does not start a second load of its own.
+        viewedProfileState.value = ViewedProfile(pubKey, core.profiles[pubKey], emptyList(), loading = true)
         if (asRoot) goToRoot(Screen.Profile(pubKey)) else go(Screen.Profile(pubKey))
+        loadProfileNow(pubKey)
+    }
+
+    /**
+     * Makes the profile screen's state be about [pubKey].
+     *
+     * Called by the screen itself on arrival as well as by [openProfileNow],
+     * and that is the fix for posts that vanished on the way *back* to somebody.
+     * [viewedProfileState] is a single slot: opening Alice, then Bob, then
+     * pressing back left the screen showing Alice with Bob's state in the slot,
+     * which the screen correctly refused to draw — so her posts disappeared and
+     * nothing ever put them back, because the only thing that loaded a profile
+     * was the tap that navigated to it.
+     */
+    fun ensureProfileShown(pubKey: PubKey) {
+        if (viewedProfileState.value?.pubKey == pubKey) return
+        run { loadProfileNow(pubKey) }
+    }
+
+    /**
+     * Re-reads the profile on screen, for the pull gesture.
+     *
+     * The same load, with its own indicator and without the busy bar: a pull is
+     * a question about *this* person, and the app-wide progress line answers a
+     * different one.
+     */
+    fun refreshProfile(pubKey: PubKey) {
+        if (refreshingProfileState.value) return
+        refreshingProfileState.value = true
+        scope.launch {
+            try {
+                // A fresh look, so the offer to load older posts comes back too.
+                exhaustedAuthorsState.value = exhaustedAuthorsState.value - pubKey
+                loadProfileNow(pubKey)
+            } catch (failure: Throwable) {
+                messageState.value = UserMessage.Error(failure.message ?: "Could not refresh this profile")
+            } finally {
+                refreshingProfileState.value = false
+            }
+        }
+    }
+
+    private suspend fun loadProfileNow(pubKey: PubKey) {
+        ensureTransportStarted()
         // A fresh look: somebody who had nothing older last time may have posted
         // since, and their relays may have been approved since. Either way the
         // offer to load more comes back.
@@ -1007,6 +1065,20 @@ class AppController(
                 npub = core.bech32.encodeNpub(pubKey),
             )
     }
+
+    /**
+     * Everything held by [author], newest first.
+     *
+     * Read from the note store rather than from the snapshot [ViewedProfile]
+     * took, so a profile shows what the app actually has at the moment it draws:
+     * posts that arrive on the open subscription appear without a reload, and —
+     * the bug this fixes — a load that is still in flight no longer blanks the
+     * posts already on screen.
+     */
+    fun notesBy(author: PubKey): List<Note> =
+        core.feed.allNotes.value.values
+            .filter { it.author == author }
+            .sortedByDescending { it.createdAt }
 
     /**
      * Fetches an older page of [author]'s posts.
@@ -1249,6 +1321,23 @@ class AppController(
 
     val threadReplies: StateFlow<Map<EventId, Note>> get() = core.threads.allReplies
 
+    /** Posts a conversation hangs from, fetched when its thread was opened. */
+    val threadRoots: StateFlow<Map<EventId, Note>> get() = core.threads.threadRoots
+
+    /**
+     * An event id in the form other apps accept: `nostr:note1…`.
+     *
+     * Bare hex is what the id *is* and not what anything reads: NIP-21 says a
+     * reference is the `nostr:` URI of a NIP-19 entity, so that is what Copy
+     * puts on the clipboard — paste it into another client, or into a post, and
+     * it resolves. The hex is still there for anyone who wants it, in the raw
+     * JSON one item further down the same menu.
+     */
+    fun shareableEventId(id: EventId): String =
+        runCatching { "nostr:" + core.bech32.encodeNote(id.hex) }
+            // A key that will not encode is not worth losing the copy over.
+            .getOrElse { id.hex }
+
     // ---- following ---------------------------------------------------------
 
     /** The public kind 3 list. */
@@ -1379,6 +1468,7 @@ class AppController(
     fun authorOf(id: EventId): PubKey? =
         core.feed.allNotes.value[id]?.author
             ?: core.threads.allReplies.value[id]?.author
+            ?: core.threads.threadRoots.value[id]?.author
             ?: core.threads.allComments.value[id]?.author
 
     fun displayName(pubKey: PubKey): String =

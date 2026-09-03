@@ -52,6 +52,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.ui.screen.ComposeNoteScreen
 import app.wayfarer.android.ui.screen.EditArticleScreen
 import app.wayfarer.android.ui.screen.EditProfileScreen
@@ -427,15 +429,16 @@ private fun TabBar(
                     .height(64.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Compass for the half of the app that reaches out, Moss for the half
-            // that stays on this phone. The two accents are what the palette was
-            // built around; tinting both tabs alike threw that away.
+            // The app's two colours, on the one control that names the same
+            // division: Moss for everything public, Trail for everything that
+            // stays here. Tinting both tabs alike threw that away, and tinting
+            // them the other way round taught the wrong pair.
             Tab(
                 WayfarerIcons.Globe,
                 "Global",
                 globalSelected,
                 onGlobal,
-                MaterialTheme.colorScheme.primary,
+                MaterialTheme.colorScheme.publicAccent,
                 Modifier.weight(1f),
             )
             Tab(
@@ -443,7 +446,7 @@ private fun TabBar(
                 "Local",
                 localSelected,
                 onLocal,
-                MaterialTheme.colorScheme.tertiary,
+                MaterialTheme.colorScheme.localAccent,
                 Modifier.weight(1f),
             )
         }
@@ -494,7 +497,7 @@ private fun WaitingPill(count: Int) {
     )
 }
 
-/** Green when something is connected, dim when nothing is. */
+/** Lit when something is connected, dim when nothing is. */
 @Composable
 private fun ConnectionDot(live: Boolean) {
     Box(
@@ -502,10 +505,11 @@ private fun ConnectionDot(live: Boolean) {
             .padding(start = 8.dp)
             .size(8.dp)
             .background(
-                // Moss, which is what the sentence above always claimed. It was
-                // drawn in Compass blue, so "connected" and "this is a button"
-                // were the same colour in the one bar that means both.
-                if (live) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline,
+                // Trail: a relay connection is this phone talking to a server it
+                // was allowed to talk to, which is the local half of the app.
+                // It was drawn in Compass blue, so "connected" and "this is a
+                // button" were the same colour in the one bar that means both.
+                if (live) MaterialTheme.colorScheme.localAccent else MaterialTheme.colorScheme.outline,
                 CircleShape,
             ),
     )

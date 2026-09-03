@@ -48,10 +48,26 @@ class ThreadRepository(
 ) {
     private val comments = MutableStateFlow<Map<EventId, Comment>>(emptyMap())
     private val replies = MutableStateFlow<Map<EventId, Note>>(emptyMap())
+    private val roots = MutableStateFlow<Map<EventId, Note>>(emptyMap())
 
     val allComments: StateFlow<Map<EventId, Comment>> = comments.asStateFlow()
 
     val allReplies: StateFlow<Map<EventId, Note>> = replies.asStateFlow()
+
+    /**
+     * The posts conversations hang from, when they had to be fetched.
+     *
+     * A thread opened from a reply — "see the conversation" — is a thread whose
+     * root the reader has very often never seen: the reply arrived in a feed and
+     * the post it answers did not. Everything under the root was fetched and
+     * shown, and the post itself was silently missing, so a conversation opened
+     * that way began in the middle.
+     *
+     * Kept apart from [replies] because a root is not a reply — it answers
+     * nothing, and [absorb] rejects it for exactly that reason — and apart from
+     * the feed because it was never part of one.
+     */
+    val threadRoots: StateFlow<Map<EventId, Note>> = roots.asStateFlow()
 
     /**
      * Everything written under [root], oldest first.
@@ -102,12 +118,13 @@ class ThreadRepository(
     }
 
     /**
-     * Fetches the thread under [root].
+     * Fetches the thread under [root], and the post it hangs from.
      *
-     * Two filters, because the two conventions live in different tags: kind 1111
-     * comments carry the root in an uppercase `E`/`A`, and kind 1 replies carry
-     * it in a lowercase `e`. Asking for only one would silently hide half of
-     * every conversation.
+     * Two filters for the replies, because the two conventions live in different
+     * tags: kind 1111 comments carry the root in an uppercase `E`/`A`, and kind 1
+     * replies carry it in a lowercase `e`. Asking for only one would silently
+     * hide half of every conversation. A third asks for the root event by id, so
+     * a conversation opened from one of its replies has a beginning.
      */
     suspend fun load(root: ThreadRef): Int {
         val plan =
@@ -120,13 +137,34 @@ class ThreadRepository(
 
         var absorbed = 0
         for (received in transport.fetch(plan)) {
+            // The root itself comes back on the third filter below, and it is
+            // not a reply to anything — so absorb refuses it, correctly, and it
+            // is filed here instead.
+            if (root is ThreadRef.Event && received.event.id == root.id) {
+                if (absorbRoot(received.event, received.relay)) absorbed++
+                continue
+            }
             if (absorb(received.event, received.relay)) absorbed++
         }
         return absorbed
     }
 
+    /** Files the post a conversation hangs from. Verified like everything else. */
+    private fun absorbRoot(
+        event: NostrEvent,
+        relay: RelayUrl?,
+    ): Boolean {
+        if (!codec.verify(event)) return false
+        val note = Note.fromEvent(event, relay) ?: return false
+        events?.put(event)
+        val existing = roots.value[note.id]
+        val merged = existing?.mergeSeenOn(note.seenOn) ?: note
+        if (merged !== existing) roots.value = roots.value + (merged.id to merged)
+        return existing == null
+    }
+
     /**
-     * One filter per convention, never one filter for both.
+     * One filter per convention, never one filter for both — plus the root.
      *
      * NIP-01: conditions inside a filter are ANDed, separate filters are ORed.
      * Asking for `#E` and `#e` together — which this did — demands an event
@@ -145,6 +183,11 @@ class ThreadRepository(
                 listOf(
                     ReqFilter(kinds = listOf(EventKind.COMMENT), tags = mapOf("E" to listOf(root.id.hex))),
                     ReqFilter(kinds = listOf(EventKind.TEXT_NOTE), tags = mapOf("e" to listOf(root.id.hex))),
+                    // And the post itself. Every filter above asks for things
+                    // that *point at* the root, which is everything in the
+                    // conversation except the one post it is about — so a thread
+                    // opened from a reply used to render its answers under a gap.
+                    ReqFilter(ids = listOf(root.id.hex)),
                 )
             // No kind 1 counterpart: NIP-10 threads events, and an article is
             // addressed by `kind:pubkey:d` rather than by any single event.

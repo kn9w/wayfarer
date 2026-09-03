@@ -5,6 +5,7 @@ import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.NostrEvent
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.ThreadRef
+import app.wayfarer.core.nostr.ReceivedEvent
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.outbox.RelayListCache
 import app.wayfarer.core.relay.RelayDirectory
@@ -168,18 +169,87 @@ class ThreadRepositoryTest {
 
             val filters = transport.fetched.single().getValue(relay("open.example"))
 
-            // Two filters, not one. NIP-01 ANDs the conditions inside a filter
+            // Three filters, not one. NIP-01 ANDs the conditions inside a filter
             // and ORs separate filters, so "#E or #e" has to be two — asking for
             // both in one demands an event carrying both, which a NIP-10 reply
             // never is. This is the bug the previous version of this test
-            // asserted *for*, by checking a single filter held both keys.
-            assertEquals(2, filters.size)
+            // asserted *for*, by checking a single filter held both keys. The
+            // third is the root event itself.
+            assertEquals(3, filters.size)
 
             val comments = filters.single { it.kinds == listOf(EventKind.COMMENT) }
             assertEquals(listOf(rootNote.hex), comments.tags?.get("E"))
 
             val replies = filters.single { it.kinds == listOf(EventKind.TEXT_NOTE) }
             assertEquals(listOf(rootNote.hex), replies.tags?.get("e"))
+        }
+
+    @Test
+    fun `loading a conversation also asks for the post it is about`() =
+        runTest {
+            val transport = FakeTransport()
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("open.example"), read = true, write = false)
+
+            repo(transport, directory).load(ThreadRef.Event(rootNote))
+
+            // Every other filter asks for things that *point at* the root, which
+            // is everything in the conversation except the one post it is about.
+            // Without this one, a thread opened from one of its replies renders
+            // as a list of answers to nothing.
+            val byId = transport.fetched.single().getValue(relay("open.example")).single { it.ids != null }
+            assertEquals(listOf(rootNote.hex), byId.ids)
+            assertNull(byId.tags, "asking for an event by id needs no tag condition")
+        }
+
+    @Test
+    fun `the post a conversation is about is kept, though it answers nothing`() =
+        runTest {
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("open.example"), read = true, write = false)
+            val post =
+                NostrEvent(
+                    id = rootNote,
+                    pubKey = alice,
+                    createdAt = 50,
+                    kind = EventKind.TEXT_NOTE,
+                    tags = emptyList(),
+                    content = "the post itself",
+                    sig = "0".repeat(128),
+                )
+            val transport = FakeTransport(listOf(ReceivedEvent(post, relay("open.example"))))
+            val threads = repo(transport, directory)
+
+            threads.load(ThreadRef.Event(rootNote))
+
+            // Not in the replies — it replies to nothing, and absorb is right to
+            // refuse it — but held, so the screen can draw the top of the thread.
+            assertEquals("the post itself", threads.threadRoots.value[rootNote]?.content)
+            assertTrue(threads.allReplies.value.isEmpty())
+            assertTrue(threads.threadUnder(ThreadRef.Event(rootNote)).isEmpty())
+        }
+
+    @Test
+    fun `a forged post is not kept as a conversation's root`() =
+        runTest {
+            val directory = RelayDirectory(clock)
+            directory.approve(relay("open.example"), read = true, write = false)
+            val post =
+                NostrEvent(
+                    id = rootNote,
+                    pubKey = alice,
+                    createdAt = 50,
+                    kind = EventKind.TEXT_NOTE,
+                    tags = emptyList(),
+                    content = "not really theirs",
+                    sig = "0".repeat(128),
+                )
+            val transport = FakeTransport(listOf(ReceivedEvent(post, relay("open.example"))))
+            val threads = repo(transport, directory, codec = FakeCodec(verifies = false))
+
+            threads.load(ThreadRef.Event(rootNote))
+
+            assertTrue(threads.threadRoots.value.isEmpty(), "a root is verified like everything else")
         }
 
     @Test

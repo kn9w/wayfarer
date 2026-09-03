@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.theme.publicButtonColors
 import app.wayfarer.android.viewmodel.AppController
 
 @Composable
@@ -76,6 +77,7 @@ fun ComposeNoteScreen(controller: AppController) {
                 onClick = { controller.post(text) },
                 enabled = !busy && text.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
+                colors = publicButtonColors(),
             ) { Text("Publish") }
             TextButton(onClick = { controller.back() }) { Text("Cancel") }
         }

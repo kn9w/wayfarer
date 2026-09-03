@@ -1,5 +1,6 @@
 package app.wayfarer.android.ui.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.theme.publicButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.RelayListRow
 
@@ -181,6 +184,10 @@ fun RelayListScreen(controller: AppController) {
                             onClick = { controller.relayList.publish() },
                             enabled = state.rows.isNotEmpty(),
                             modifier = Modifier.fillMaxWidth(),
+                            // Moss: this signs a kind 10002 and hands it to
+                            // relays, which is the whole difference between this
+                            // screen and the permission list it is confused with.
+                            colors = publicButtonColors(),
                         ) { Text(if (state.publishedAt == null) "Publish my relay list" else "Publish the changes") }
                         Text(
                             "Signs a kind 10002 event and sends it to the relays you allow for posting. It " +
@@ -212,7 +219,14 @@ private fun StatusCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when {

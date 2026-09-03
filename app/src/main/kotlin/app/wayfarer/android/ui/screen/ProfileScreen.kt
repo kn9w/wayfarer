@@ -1,11 +1,13 @@
 package app.wayfarer.android.ui.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,8 +39,11 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,9 +60,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.Avatar
 import app.wayfarer.android.ui.BannerImage
 import app.wayfarer.android.ui.IdentityChip
+import app.wayfarer.android.ui.MediaViewer
 import app.wayfarer.android.ui.NpubQrCard
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.localContainer
+import app.wayfarer.android.ui.theme.localOutlinedButtonColors
+import app.wayfarer.android.ui.theme.onLocalContainer
+import app.wayfarer.android.ui.theme.onPublicContainer
+import app.wayfarer.android.ui.theme.publicAccent
+import app.wayfarer.android.ui.theme.publicButtonColors
+import app.wayfarer.android.ui.theme.publicContainer
+import app.wayfarer.android.ui.theme.publicOutlinedButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.RelayApproval
 import app.wayfarer.android.viewmodel.Screen
@@ -99,132 +114,153 @@ fun ProfileScreen(
     val relayLists by controller.relayLists.collectAsStateWithLifecycle()
     val loadingMore by controller.loadingMore.collectAsStateWithLifecycle()
     val exhausted by controller.exhaustedAuthors.collectAsStateWithLifecycle()
+    val refreshing by controller.refreshingProfile.collectAsStateWithLifecycle()
+    val heldNotes by controller.allNotes.collectAsStateWithLifecycle()
     val isMe = account?.pubKey == pubKey
+
+    // Whoever this screen is about, loaded. Coming *back* to a profile — from a
+    // note, from somebody else's profile — restored the screen without
+    // restoring what it is about, because the load happened in the tap that
+    // navigated away from here. That is why a profile sometimes had no posts.
+    LaunchedEffect(pubKey) { controller.ensureProfileShown(pubKey) }
 
     val authorArticles = articles.filter { it.author == pubKey }
     // Only this person's. viewedProfile is one slot, so between tapping a name
     // and the load starting it still holds whoever was on screen before.
     val mine = viewed?.takeIf { it.pubKey == pubKey }
-    val notes = mine?.notes.orEmpty()
+    // From the live note store rather than from the snapshot the load returned:
+    // a reload sets that snapshot empty while it is in flight, which is the
+    // other half of posts disappearing from a profile that had them.
+    val notes = remember(heldNotes, pubKey) { controller.notesBy(pubKey) }
     val relayEntries = relayLists[pubKey]?.entries.orEmpty()
 
     val tabs = remember(authorArticles.isEmpty()) { ProfileTab.shownFor(hasArticles = authorArticles.isNotEmpty()) }
     var tab by remember(pubKey) { mutableStateOf(ProfileTab.Notes) }
     val selected = if (tab in tabs) tab else ProfileTab.Notes
 
-    LazyColumn(
+    // Pull to refresh, which the feed has had all along and this screen never
+    // did — so the one screen where "there is nothing here" is most likely to
+    // be wrong was also the one with no way to ask again.
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = { controller.refreshProfile(pubKey) },
+        state = rememberPullToRefreshState(),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        item {
-            ProfileHeader(
-                pubKey = pubKey,
-                controller = controller,
-                isMe = isMe,
-                notesFound = notes.size,
-                articleCount = authorArticles.size,
-                relayEntries = relayEntries,
-            )
-        }
-
-        // Both of these are calls to action rather than content, so they stay
-        // above the tabs where they cannot be scrolled past by choosing a tab.
-        if (isMe && offerRelayList) {
-            item { RelayListPrompt(onPublish = controller::openRelayList) }
-        }
-
-        if (mine?.unreachable == true) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
             item {
-                Text(
-                    "This person publishes only to relays you have not approved, so nothing of theirs can be fetched. " +
-                        "Their relays are waiting in the Relays tab.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = PostHorizontalPadding, vertical = 8.dp),
+                ProfileHeader(
+                    pubKey = pubKey,
+                    controller = controller,
+                    isMe = isMe,
+                    notesFound = notes.size,
+                    articleCount = authorArticles.size,
+                    relayEntries = relayEntries,
                 )
             }
-        }
 
-        // An ordinary item rather than a sticky header. Pinned, the tab row sat
-        // over the top of the posts it was meant to be labelling on every scroll
-        // — and the row it pins is not orientation worth a permanent strip of a
-        // phone, since the tabs are two words that scroll back into view with
-        // one flick.
-        item {
-            PrimaryTabRow(
-                selectedTabIndex = tabs.indexOf(selected),
-                containerColor = MaterialTheme.colorScheme.background,
-            ) {
-                for (option in tabs) {
-                    Tab(
-                        selected = option == selected,
-                        onClick = { tab = option },
-                        text = { Text(option.label(authorArticles.size, notes.size, relayEntries.size)) },
-                    )
-                }
-            }
-        }
-
-        when (selected) {
-            ProfileTab.Notes -> {
-                if (mine?.loading == false && notes.isEmpty()) {
-                    item { EmptyTabNote("No notes found.") }
-                }
-                items(notes, key = { it.id.hex }) { note ->
-                    NoteRow(
-                        note = note,
-                        controller = controller,
-                        onOpen = { controller.go(Screen.ReadNote(note.id)) },
-                    )
-                    PostDivider()
-                }
-                if (notes.isNotEmpty()) {
-                    item {
-                        LoadMoreButton(
-                            loading = loadingMore,
-                            exhausted = pubKey in exhausted,
-                            onLoadMore = { controller.loadMoreFrom(pubKey) },
-                        )
-                    }
-                }
+            // Both of these are calls to action rather than content, so they stay
+            // above the tabs where they cannot be scrolled past by choosing a tab.
+            if (isMe && offerRelayList) {
+                item { RelayListPrompt(onPublish = controller::openRelayList) }
             }
 
-            ProfileTab.Articles -> {
-                items(authorArticles, key = { it.address }) { article ->
-                    ArticleRow(
-                        article = article,
-                        controller = controller,
-                        onOpen = { controller.go(Screen.ReadArticle(article.address)) },
-                    )
-                    PostDivider()
-                }
-                if (authorArticles.isNotEmpty()) {
-                    item {
-                        LoadMoreButton(
-                            loading = loadingMore,
-                            exhausted = pubKey in exhausted,
-                            onLoadMore = { controller.loadMoreFrom(pubKey) },
-                        )
-                    }
-                }
-            }
-
-            ProfileTab.Relays -> {
+            if (mine?.unreachable == true) {
                 item {
-                    Box(Modifier.padding(horizontal = PostHorizontalPadding, vertical = 8.dp)) {
-                        AdvertisedRelaysCard(
-                            // From the reactive cache rather than a synchronous read:
-                            // advertisedRelaysFor peeks at a map with no flow, so a
-                            // relay list arriving after first composition never showed.
-                            entries = relayEntries,
-                            isMe = isMe,
-                            controller = controller,
-                            ownerName = controller.displayName(pubKey),
-                            onManage = controller::openRelayList,
-                            // It has a tab to itself now. Collapsed by default
-                            // made sense when it sat between the header and the
-                            // posts; here it would be an empty tab.
-                            initiallyExpanded = true,
+                    Text(
+                        "This person publishes only to relays you have not approved, so nothing of theirs can be fetched. " +
+                            "Their relays are waiting in the Relays tab.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = PostHorizontalPadding, vertical = 8.dp),
+                    )
+                }
+            }
+
+            // An ordinary item rather than a sticky header. Pinned, the tab row sat
+            // over the top of the posts it was meant to be labelling on every scroll
+            // — and the row it pins is not orientation worth a permanent strip of a
+            // phone, since the tabs are two words that scroll back into view with
+            // one flick.
+            item {
+                PrimaryTabRow(
+                    selectedTabIndex = tabs.indexOf(selected),
+                    containerColor = MaterialTheme.colorScheme.background,
+                ) {
+                    for (option in tabs) {
+                        Tab(
+                            selected = option == selected,
+                            onClick = { tab = option },
+                            text = { Text(option.label(authorArticles.size, notes.size, relayEntries.size)) },
                         )
+                    }
+                }
+            }
+
+            when (selected) {
+                ProfileTab.Notes -> {
+                    if (mine?.loading == false && notes.isEmpty()) {
+                        item { EmptyTabNote("No notes found.") }
+                    }
+                    items(notes, key = { it.id.hex }) { note ->
+                        NoteRow(
+                            note = note,
+                            controller = controller,
+                            onOpen = { controller.go(Screen.ReadNote(note.id)) },
+                        )
+                        PostDivider()
+                    }
+                    if (notes.isNotEmpty()) {
+                        item {
+                            LoadMoreButton(
+                                loading = loadingMore,
+                                exhausted = pubKey in exhausted,
+                                onLoadMore = { controller.loadMoreFrom(pubKey) },
+                            )
+                        }
+                    }
+                }
+
+                ProfileTab.Articles -> {
+                    items(authorArticles, key = { it.address }) { article ->
+                        ArticleRow(
+                            article = article,
+                            controller = controller,
+                            onOpen = { controller.go(Screen.ReadArticle(article.address)) },
+                        )
+                        PostDivider()
+                    }
+                    if (authorArticles.isNotEmpty()) {
+                        item {
+                            LoadMoreButton(
+                                loading = loadingMore,
+                                exhausted = pubKey in exhausted,
+                                onLoadMore = { controller.loadMoreFrom(pubKey) },
+                            )
+                        }
+                    }
+                }
+
+                ProfileTab.Relays -> {
+                    item {
+                        Box(Modifier.padding(horizontal = PostHorizontalPadding, vertical = 8.dp)) {
+                            AdvertisedRelaysCard(
+                                // From the reactive cache rather than a synchronous read:
+                                // advertisedRelaysFor peeks at a map with no flow, so a
+                                // relay list arriving after first composition never showed.
+                                entries = relayEntries,
+                                isMe = isMe,
+                                controller = controller,
+                                ownerName = controller.displayName(pubKey),
+                                onManage = controller::openRelayList,
+                                // It has a tab to itself now. Collapsed by default
+                                // made sense when it sat between the header and the
+                                // posts; here it would be an empty tab.
+                                initiallyExpanded = true,
+                            )
+                        }
                     }
                 }
             }
@@ -300,6 +336,11 @@ private fun ProfileHeader(
     val clipboard = LocalClipboardManager.current
     var showQr by remember { mutableStateOf(false) }
     var bioExpanded by remember(pubKey) { mutableStateOf(false) }
+    var viewing by remember(pubKey) { mutableStateOf<String?>(null) }
+
+    viewing?.let { url ->
+        MediaViewer(url = url, video = false, onDismiss = { viewing = null })
+    }
 
     if (showQr) {
         ModalBottomSheet(onDismissRequest = { showQr = false }, sheetState = rememberModalBottomSheetState()) {
@@ -310,16 +351,13 @@ private fun ProfileHeader(
             ) {
                 Text(controller.displayName(pubKey), style = MaterialTheme.typography.titleMedium)
                 NpubQrCard(npub)
+                // The code and the key it encodes, and nothing else. What an
+                // npub is belongs in the introduction, not on a sheet somebody
+                // opened to hold a phone up to another phone.
                 Text(
                     npub,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "This is the public half of their key. Anyone can have it — it is how somebody is named on " +
-                        "nostr, and there is no directory to look them up in instead.",
-                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -333,6 +371,7 @@ private fun ProfileHeader(
                 controller = controller,
                 height = BannerHeight,
                 onOpenMedia = { host -> controller.openMediaHost(host, "banner on ${controller.displayName(pubKey)}") },
+                onOpenPicture = { viewing = it },
             )
             // Straddling the banner's lower edge, which is the shape every
             // profile on every platform has had for a decade — worth matching,
@@ -354,6 +393,12 @@ private fun ProfileHeader(
                     onOpenMedia = { host ->
                         controller.openMediaHost(host, "the picture of ${controller.displayName(pubKey)}")
                     },
+                    // And once it is drawn, the tap is the picture. Which is
+                    // also what stops it from being the banner: the avatar
+                    // overhangs the banner, and until it had a tap of its own
+                    // the top half of somebody's face opened the question about
+                    // the strip behind it.
+                    onOpenPicture = { viewing = it },
                 )
             }
         }
@@ -366,7 +411,15 @@ private fun ProfileHeader(
             Modifier.padding(horizontal = PostHorizontalPadding).padding(top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            NameBlock(pubKey, profile?.displayName, profile?.name, controller)
+            NameBlock(
+                pubKey = pubKey,
+                displayName = profile?.displayName,
+                name = profile?.name,
+                npub = npub,
+                controller = controller,
+                onCopy = { clipboard.setText(AnnotatedString(it)) },
+                onShowQr = { showQr = true },
+            )
 
             profile?.about?.let { about ->
                 Text(
@@ -382,12 +435,9 @@ private fun ProfileHeader(
 
             profile?.nip05?.let { Nip05Line(it) }
 
-            IdentityChips(
-                npub = npub,
-                website = profile?.website,
-                onCopy = { clipboard.setText(AnnotatedString(it)) },
-                onShowQr = { showQr = true },
-            )
+            profile?.website?.let { website ->
+                IdentityChip(label = website, onClick = { clipboard.setText(AnnotatedString(website)) })
+            }
 
             PaymentTargets(
                 pubKey = pubKey,
@@ -534,25 +584,64 @@ private fun PaymentTargetRow(
 }
 
 /**
- * The name, and the handle under it.
+ * The name, the key, and the handle under them.
  *
- * Both, where a profile sets both. `displayNameOrNull` picks one and drops the
- * other, which is right for a byline and wrong here: `display_name` is what
- * somebody calls themselves and `name` is the short handle other clients show
- * with an `@`, and on the one screen about a person there is room for each.
+ * A name is what somebody calls themselves and an npub is who they actually
+ * are, and the second used to be filed two rows down among the addresses — so
+ * the one identifier that cannot be claimed by anybody else read as an
+ * afterthought. It sits beside the name now, with the code button after it.
+ *
+ * [FlowRow] rather than a Row, because a long name and a shortened key do not
+ * both fit on a narrow phone: when the name takes the line, the key and its
+ * button wrap onto the next one together instead of squeezing the name into an
+ * ellipsis.
+ *
+ * Both the display name and the handle, where a profile sets both.
+ * `displayNameOrNull` picks one and drops the other, which is right for a
+ * byline and wrong here: `display_name` is what somebody calls themselves and
+ * `name` is the short handle other clients show with an `@`, and on the one
+ * screen about a person there is room for each.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NameBlock(
     pubKey: PubKey,
     displayName: String?,
     name: String?,
+    npub: String,
     controller: AppController,
+    onCopy: (String) -> Unit,
+    onShowQr: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            controller.displayName(pubKey),
-            style = MaterialTheme.typography.headlineSmall,
-        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                controller.displayName(pubKey),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            // The key and its code button travel together: they are one thought
+            // — "this is who they are, here it is to scan" — and wrapping them
+            // apart would put a lone button under a name.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IdentityChip(
+                    label = shortenNpub(npub),
+                    monospace = true,
+                    // Copies the whole key, not the shortened form on the chip.
+                    onClick = { onCopy(npub) },
+                )
+                IconButton(onClick = onShowQr, modifier = Modifier.size(36.dp)) {
+                    Icon(WayfarerIcons.Qr, contentDescription = "Show this npub as a code", modifier = Modifier.size(20.dp))
+                }
+            }
+        }
         // Only when it adds something: repeating the title underneath itself in
         // grey is worse than showing nothing.
         val handle = name?.takeIf { !it.equals(displayName, ignoreCase = true) && !it.equals(controller.displayName(pubKey), true) }
@@ -592,38 +681,6 @@ private fun Nip05Line(nip05: String) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-/**
- * The npub and the other addresses, as things to do rather than things to read.
- *
- * The npub used to be printed in full: 63 monospace characters wrapping over
- * three lines, dominating the card and useful to nobody, since the one thing
- * anybody wants to do with a key is copy it or show it to a phone.
- */
-@Composable
-private fun IdentityChips(
-    npub: String,
-    website: String?,
-    onCopy: (String) -> Unit,
-    onShowQr: () -> Unit,
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-    ) {
-        IdentityChip(
-            label = shortenNpub(npub),
-            monospace = true,
-            // Copies the whole key, not the shortened form on the chip.
-            onClick = { onCopy(npub) },
-        )
-        IconButton(onClick = onShowQr, modifier = Modifier.size(36.dp)) {
-            Icon(WayfarerIcons.Qr, contentDescription = "Show this npub as a code", modifier = Modifier.size(20.dp))
-        }
-        website?.let { IdentityChip(label = it, onClick = { onCopy(it) }) }
     }
 }
 
@@ -713,17 +770,25 @@ private fun OwnProfileActions(controller: AppController) {
 private fun RelayListPrompt(onPublish: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = PostHorizontalPadding, vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        // In the colour of the thing it is asking for: this ends in a signed
+        // public note, so it is Moss rather than another grey slab.
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.publicContainer,
+                contentColor = MaterialTheme.colorScheme.onPublicContainer,
+            ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("One thing left", style = MaterialTheme.typography.titleSmall)
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("One thing left", style = MaterialTheme.typography.titleMedium)
             Text(
                 "You can post, but nobody knows where to look for your posts yet. A public relay list tells " +
                     "other people's apps which relays you use — it is one small signed note, and without it " +
                     "only people who already share a relay with you will see anything you write.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = onPublish) { Text("Set up where others find me") }
+            Button(onClick = onPublish, colors = publicButtonColors()) { Text("Set up where others find me") }
         }
     }
 }
@@ -746,27 +811,42 @@ private fun FollowControls(
     val isLocal = pubKey in local
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Moss for the one that publishes, Trail for the one that does not —
+        // the app's two colours, doing the job the sentence underneath used to
+        // do on its own.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (isPublic) {
-                OutlinedButton(onClick = { controller.unfollowPublicly(pubKey) }) { Text("Unfollow publicly") }
+                OutlinedButton(
+                    onClick = { controller.unfollowPublicly(pubKey) },
+                    colors = publicOutlinedButtonColors(),
+                ) { Text("Unfollow publicly") }
             } else {
-                Button(onClick = { controller.followPublicly(pubKey) }) { Text("Follow publicly") }
+                Button(
+                    onClick = { controller.followPublicly(pubKey) },
+                    colors = publicButtonColors(),
+                ) { Text("Follow publicly") }
             }
             if (isLocal) {
-                OutlinedButton(onClick = { controller.unfollowLocally(pubKey) }) { Text("Remove from this phone") }
+                OutlinedButton(
+                    onClick = { controller.unfollowLocally(pubKey) },
+                    colors = localOutlinedButtonColors(),
+                ) { Text("Remove from this phone") }
             } else {
-                OutlinedButton(onClick = { controller.followLocally(pubKey) }) { Text("Follow on this phone") }
+                OutlinedButton(
+                    onClick = { controller.followLocally(pubKey) },
+                    colors = localOutlinedButtonColors(),
+                ) { Text("Follow on this phone") }
             }
         }
-        Text(
-            if (isPublic || isLocal) {
-                "A public follow is listed in a signed note anyone can read. A follow on this phone is told to nobody."
-            } else {
-                "Following publicly republishes your whole follow list. Following on this phone tells no relay anything."
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // Only before the decision. Repeating what the two kinds of follow mean
+        // to somebody who has already made one is a paragraph they have read.
+        if (!isPublic && !isLocal) {
+            Text(
+                "Following publicly republishes your whole follow list. Following on this phone tells no relay anything.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         // Not a refusal: the follow still publishes. But a list built from
         // nothing replaces the real one everywhere, and that is worth knowing
         // before the tap rather than after it.
@@ -806,9 +886,24 @@ private fun AdvertisedRelaysCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        // Drawn on the page's own ground with a hairline around it, rather than
+        // in the grey `surfaceVariant` slab this used to be. That grey is the
+        // one colour in the palette with no job — it is neither the page nor an
+        // accent — and a block of it under every profile made the app's most
+        // load-bearing information look like a disclaimer.
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             // Collapsed by default: on somebody else's profile this is reference
             // material, and the one thing worth knowing at a glance — whether
             // this app can actually reach them — fits in the badge.
@@ -817,11 +912,19 @@ private fun AdvertisedRelaysCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    if (isMe) "Where others find you" else "Where this person says to find them",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (isMe) "Where others find you" else "Where this person says to find them",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        // The kicker says which of the app's two lists this is,
+                        // in three words, in the colour that means public.
+                        "public relay list · NIP-65",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.publicAccent,
+                    )
+                }
                 if (entries.isNotEmpty()) {
                     CoverageBubble(allowed = allowedCount, total = entries.size)
                 }
@@ -837,14 +940,17 @@ private fun AdvertisedRelaysCard(
                             "than fetched from where they actually publish."
                     },
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else if (expanded) {
-                for ((entry, approval) in entries.sortedBy { it.url.display() }.zip(approvals)) {
-                    AdvertisedRelayRow(entry, approval) {
-                        controller.openRelayDetail(
-                            entry.url,
-                            because = "$ownerName says they can be found here",
-                        )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((entry, approval) in entries.sortedBy { it.url.display() }.zip(approvals)) {
+                        AdvertisedRelayRow(entry, approval) {
+                            controller.openRelayDetail(
+                                entry.url,
+                                because = "$ownerName says they can be found here",
+                            )
+                        }
                     }
                 }
             }
@@ -854,6 +960,7 @@ private fun AdvertisedRelaysCard(
                     "This is a public note signed by your key (NIP-65). It is not the same list as the relays " +
                         "this phone is allowed to connect to.",
                     style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // Red — they advertise relays and none of them are allowed here —
                 // is the one state where this button is the wrong next step: the
@@ -861,7 +968,7 @@ private fun AdvertisedRelaysCard(
                 // With no list at all there is no bubble and no other way in, so
                 // the button stays.
                 if (entries.isEmpty() || allowedCount > 0) {
-                    Button(onClick = onManage) {
+                    Button(onClick = onManage, colors = publicButtonColors()) {
                         Text(if (entries.isEmpty()) "Set up my relay list" else "Manage my relay list")
                     }
                 }
@@ -888,12 +995,19 @@ private fun CoverageBubble(
     total: Int,
 ) {
     val colors = MaterialTheme.colorScheme
+    // Trail, because what this counts is a fact about this phone — how much of
+    // what they advertise the local permission list will let the app touch —
+    // rather than anything published.
     val (background, content, rest) =
         when {
             allowed == 0 -> Triple(colors.errorContainer, colors.onErrorContainer, WayfarerIcons.Close to "$total")
             allowed < total ->
-                Triple(colors.secondaryContainer, colors.onSecondaryContainer, WayfarerIcons.HalfCheck to "$allowed of $total")
-            else -> Triple(colors.tertiaryContainer, colors.onTertiaryContainer, WayfarerIcons.Check to "$total")
+                Triple(
+                    colors.surfaceContainerHighest,
+                    colors.onSurfaceVariant,
+                    WayfarerIcons.HalfCheck to "$allowed of $total",
+                )
+            else -> Triple(colors.localContainer, colors.onLocalContainer, WayfarerIcons.Check to "$total")
         }
     val (icon, label) = rest
 
@@ -914,7 +1028,13 @@ private fun AdvertisedRelayRow(
     onOpen: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(vertical = 4.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .clickable(onClick = onOpen)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -922,7 +1042,8 @@ private fun AdvertisedRelayRow(
         Icon(
             if (allowed) WayfarerIcons.Check else WayfarerIcons.Close,
             contentDescription = if (allowed) "Allowed here" else "Not allowed here",
-            tint = if (allowed) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+            // "Allowed here" is a permission on this phone, so Trail.
+            tint = if (allowed) MaterialTheme.colorScheme.localAccent else MaterialTheme.colorScheme.error,
             modifier = Modifier.size(14.dp),
         )
         Column(Modifier.weight(1f)) {
@@ -962,9 +1083,10 @@ private fun RelayListEntry.direction(): String =
  * Editing your own profile, grouped by what each field is for.
  *
  * Identical text fields in one flat column left the reader to work out which of
- * them anybody else would ever see, so they are grouped by what each is for —
- * and the last group publishes a second event of its own, which is the one place
- * that grouping has to be said out loud rather than implied.
+ * them anybody else would ever see, so they are grouped by what each is for.
+ * Every group above the divider is one event — the kind 0 — and everything below
+ * it is a second one with its own button, which is the one place the grouping
+ * has to be said out loud rather than implied.
  */
 @Composable
 fun EditProfileScreen(controller: AppController) {
@@ -1001,6 +1123,12 @@ fun EditProfileScreen(controller: AppController) {
             FieldGroup("Finding you") {
                 Field("NIP-05 identifier", draft.nip05) { draft = draft.copy(nip05 = it) }
                 Field("Website", draft.website) { draft = draft.copy(website = it) }
+                // Here rather than down in Payment targets, because this is a
+                // field of the kind 0 — it goes out with Publish profile below,
+                // like the website above it — and grouping it with the separate
+                // event underneath made half of what somebody typed look like
+                // it had been saved when it had not.
+                Field("Lightning address", draft.lud16) { draft = draft.copy(lud16 = it) }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
@@ -1010,37 +1138,27 @@ fun EditProfileScreen(controller: AppController) {
                 style = MaterialTheme.typography.bodySmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { controller.saveProfile(draft) }) { Text("Publish profile") }
+                Button(onClick = { controller.saveProfile(draft) }, colors = publicButtonColors()) { Text("Publish profile") }
                 TextButton(onClick = { controller.back() }) { Text("Cancel") }
             }
 
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            PaymentEditor(
-                controller = controller,
-                lightningAddress = draft.lud16,
-                onLightningAddress = { draft = draft.copy(lud16 = it) },
-            )
+            PaymentEditor(controller = controller)
         }
     }
 }
 
 /**
- * The payments half of the profile editor: a lightning address, and NIP-A3
- * payment targets.
+ * The NIP-A3 payment targets: a kind 10133 of their own, with their own button.
  *
- * Together, because to a reader they are one fact about a person — and apart in
- * the one way that matters, which is that they are two different events. `lud16`
- * is a field inside the kind 0 and goes out with Publish profile above; the
- * payment targets are a kind 10133 of their own and have their own button. The
- * text says which is which rather than leaving a user to discover that half of
- * what they typed was not saved.
+ * The lightning address is *not* here, and that is the point of the split. It is
+ * a field inside the kind 0, so it lives in the profile form above with the
+ * website — one form, one button, everything in it published together. What is
+ * left here is the second event, under a heading that names what it holds
+ * rather than a topic ("Getting paid") that could plausibly have covered both.
  */
 @Composable
-private fun PaymentEditor(
-    controller: AppController,
-    lightningAddress: String,
-    onLightningAddress: (String) -> Unit,
-) {
+private fun PaymentEditor(controller: AppController) {
     val busy by controller.busy.collectAsStateWithLifecycle()
     val account by controller.account.collectAsStateWithLifecycle()
     val published by controller.paymentTargets.collectAsStateWithLifecycle()
@@ -1054,10 +1172,10 @@ private fun PaymentEditor(
     // rows rather than of targets until it is filtered on the way out.
     var rows by remember(mine) { mutableStateOf(mine.map { it.type to it.address }) }
 
-    FieldGroup("Getting paid") {
-        Field("Lightning address", lightningAddress, onChange = onLightningAddress)
+    FieldGroup("Payment targets") {
         Text(
-            "Part of your profile, so it goes out with the button above.",
+            "A lightning address is part of your profile and goes out with the button above. These are the " +
+                "other addresses, in a note of their own.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1090,6 +1208,7 @@ private fun PaymentEditor(
                 )
             },
             enabled = !busy,
+            colors = publicButtonColors(),
         ) { Text("Publish payment addresses") }
 
         Text(

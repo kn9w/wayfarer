@@ -2,6 +2,7 @@ package app.wayfarer.android.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,13 +20,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -88,6 +92,13 @@ fun Avatar(
      * absent the mark falls back to [onClick].
      */
     onOpenMedia: ((MediaHost) -> Unit)? = null,
+    /**
+     * Where a face that *is* drawn leads: the picture, full window.
+     *
+     * Given by the profile header, where the picture is big enough to be worth
+     * looking at properly.
+     */
+    onOpenPicture: ((String) -> Unit)? = null,
 ) {
     // From the reactive map, not profileFor: a face has to appear when the
     // kind 0 lands, and a synchronous peek never recomposes.
@@ -102,18 +113,32 @@ fun Avatar(
     // means something else. Blocked is a decision already made, so it keeps the
     // ordinary tap rather than sending the reader back to reverse it.
     val undecided = host != null && (approval == MediaApproval.Waiting || approval == MediaApproval.Unknown)
+    val drawn = host != null && approval == MediaApproval.Allowed
+    val picture = profile?.picture
     val tap =
         when {
             undecided && onOpenMedia != null -> ({ onOpenMedia(host!!) })
+            drawn && picture != null && onOpenPicture != null -> ({ onOpenPicture(picture) })
             else -> onClick
         }
 
-    val base = if (tap != null) Modifier.clickable(onClick = tap) else Modifier
+    // A face with nothing to do is still not a hole. On a profile header the
+    // avatar overhangs the banner, and a Box with no pointer input of its own
+    // lets a tap land on whatever is behind it — which is how tapping the top
+    // of somebody's picture, once their media server was allowed, opened the
+    // question about their *banner*. This swallows the tap instead: no ripple,
+    // no action, and nothing underneath hearing about it.
+    val base =
+        if (tap != null) {
+            Modifier.clickable(onClick = tap)
+        } else {
+            Modifier.pointerInput(Unit) { detectTapGestures { } }
+        }
 
     Box(base.size(size).clip(CircleShape), contentAlignment = Alignment.Center) {
         Mark(seed = pubKey.hex, name = name, size = size)
 
-        if (host != null && approval == MediaApproval.Allowed) {
+        if (drawn) {
             val bitmap = rememberRemoteImage(profile?.picture, size)
             bitmap?.let {
                 Image(
@@ -150,6 +175,8 @@ fun BannerImage(
     controller: AppController,
     height: Dp = 132.dp,
     onOpenMedia: ((MediaHost) -> Unit)? = null,
+    /** Where a banner that is drawn leads: the picture, full window. */
+    onOpenPicture: ((String) -> Unit)? = null,
 ) {
     val profiles by controller.profiles.collectAsStateWithLifecycle()
     val profile = profiles[pubKey]
@@ -158,6 +185,15 @@ fun BannerImage(
     val approval = host?.let { media.approvalOf(it) } ?: MediaApproval.Unknown
     val (tone, _) = markColorsFor(pubKey.hex)
     val undecided = host != null && (approval == MediaApproval.Waiting || approval == MediaApproval.Unknown)
+    val drawn = host != null && approval == MediaApproval.Allowed
+    val banner = profile?.banner
+
+    val tap: (() -> Unit)? =
+        when {
+            undecided && onOpenMedia != null -> ({ onOpenMedia(host!!) })
+            drawn && banner != null && onOpenPicture != null -> ({ onOpenPicture(banner) })
+            else -> null
+        }
 
     Box(
         Modifier
@@ -168,9 +204,9 @@ fun BannerImage(
             // that does nothing except in one corner reads as a strip that does
             // nothing, which is how the badge came to be the only route to a
             // decision anybody could find.
-            .then(if (undecided && onOpenMedia != null) Modifier.clickable { onOpenMedia(host!!) } else Modifier),
+            .then(if (tap != null) Modifier.clickable(onClick = tap) else Modifier),
     ) {
-        if (host != null && approval == MediaApproval.Allowed) {
+        if (drawn) {
             val bitmap = rememberRemoteImage(profile?.banner, height)
             bitmap?.let {
                 Image(
@@ -276,13 +312,26 @@ fun PostImage(
 ) {
     val host = remember(url) { MediaUrls.hostOf(url) } ?: return
     val permissions by controller.media.state.collectAsStateWithLifecycle()
+    val allowed = permissions.approvalOf(host) == MediaApproval.Allowed
+
+    // Held here rather than passed in: opening a picture is a property of the
+    // picture, not of the screen it happens to be on, and every caller —
+    // feed, note, article body — wants the same answer.
+    var viewing by remember(url) { mutableStateOf(false) }
+    if (viewing) {
+        MediaViewer(url = url, video = video, onDismiss = { viewing = false })
+    }
 
     when {
         permissions.approvalOf(host) == MediaApproval.Blocked -> Unit
 
-        // Named rather than played. A video player is a decode surface and a
-        // dependency this app does not carry, and an honest line is better than
-        // a frame that never starts.
+        // A video whose host is allowed is playable, full window, by the
+        // platform's own view — see MediaViewer. Until then it is still only
+        // named, because playing it is a request to a server, and that is the
+        // decision the badge leads to.
+        video && allowed ->
+            VideoStandIn(host.display(), modifier = modifier, onPlay = { viewing = true })
+
         video ->
             MediaBadge(
                 label = "video on ${host.display()}",
@@ -290,8 +339,8 @@ fun PostImage(
                 onClick = { onOpenMedia(host) },
             )
 
-        permissions.approvalOf(host) == MediaApproval.Allowed ->
-            PostPicture(url = url, modifier = modifier, onOpenMedia = { onOpenMedia(host) })
+        allowed ->
+            PostPicture(url = url, modifier = modifier, onOpen = { viewing = true })
 
         else ->
             MediaBadge(
@@ -299,6 +348,38 @@ fun PostImage(
                 modifier = modifier,
                 onClick = { onOpenMedia(host) },
             )
+    }
+}
+
+/**
+ * A video that can be played, before it is.
+ *
+ * Not an auto-playing frame: a feed that starts decoding video as it scrolls
+ * past is a feed that fetches without being asked, which is the one thing this
+ * app does not do. So it is a band with a play button, and the tap is the ask.
+ */
+@Composable
+private fun VideoStandIn(
+    hostLabel: String,
+    modifier: Modifier = Modifier,
+    onPlay: () -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(PostPictureHeight)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClick = onPlay),
+        contentAlignment = Alignment.Center,
+    ) {
+        PlayBadge()
+        Text(
+            "video on $hostLabel",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+        )
     }
 }
 
@@ -313,7 +394,7 @@ fun PostImage(
 private fun PostPicture(
     url: String,
     modifier: Modifier = Modifier,
-    onOpenMedia: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     val bitmap = rememberRemoteImage(url, PostPictureHeight)
     if (bitmap == null) {
@@ -322,20 +403,22 @@ private fun PostPicture(
                 .fillMaxWidth()
                 .height(PostPictureHeight)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .clickable(onClick = onOpenMedia),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         )
         return
     }
     Image(
         bitmap = bitmap,
-        contentDescription = null,
+        contentDescription = "Picture in this post. Tap to open it.",
         contentScale = ContentScale.Fit,
         modifier =
             modifier
                 .fillMaxWidth()
                 .heightIn(max = PostPictureHeight)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                // Bounded in a feed and unbounded when opened: this is what a
+                // picture in a post has always looked like it would do.
+                .clickable(onClick = onOpen),
     )
 }
 
@@ -404,12 +487,24 @@ private fun MediaBadge(
 private fun rememberRemoteImage(
     url: String?,
     target: Dp,
+): ImageBitmap? =
+    // 3x the drawn size: enough for the densest screens without decoding a
+    // 4000px original to fill a 40dp circle.
+    rememberRemoteImageAt(url, (target.value * 3).toInt().coerceAtLeast(64))
+
+/**
+ * The same load, asked for in pixels.
+ *
+ * What the full-screen viewer needs: it is not drawing into a `Dp` box with a
+ * density multiplier on it, it wants as much of the picture as is worth holding.
+ */
+@Composable
+internal fun rememberRemoteImageAt(
+    url: String?,
+    pixels: Int,
 ): ImageBitmap? {
     val loader = LocalImageLoader.current
     if (url == null || loader == null) return null
-    // 3x the drawn size: enough for the densest screens without decoding a
-    // 4000px original to fill a 40dp circle.
-    val pixels = (target.value * 3).toInt().coerceAtLeast(64)
     val state = produceState<ImageBitmap?>(initialValue = null, url, pixels) { value = loader.load(url, pixels) }
     return state.value
 }

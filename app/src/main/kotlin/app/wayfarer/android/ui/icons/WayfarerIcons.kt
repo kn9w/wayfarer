@@ -285,6 +285,15 @@ object WayfarerIcons {
                 }
             }.also { _block = it }
 
+    /** Play: the triangle over a video that has not been opened yet. */
+    val Play: ImageVector
+        get() =
+            _play ?: icon("Play") {
+                filled {
+                    triangle(8f, 5f, 8f, 19f, 19f, 12f)
+                }
+            }.also { _play = it }
+
     /** Overflow: the three dots every platform uses for "more of this". */
     val More: ImageVector
         get() =
@@ -296,6 +305,7 @@ object WayfarerIcons {
                 }
             }.also { _more = it }
 
+    private var _play: ImageVector? = null
     private var _more: ImageVector? = null
     private var _globe: ImageVector? = null
     private var _tree: ImageVector? = null

@@ -1,6 +1,9 @@
 package app.wayfarer.android.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Typography
@@ -43,12 +46,14 @@ private val LightColors =
         primaryContainer = Color(0xFFC9E6FF),
         onPrimaryContainer = Color(0xFF001E2E),
         inversePrimary = Color(0xFFA0CCEE),
+        // Trail, which the app spends on everything that stays on this phone.
         secondary = Trail,
         onSecondary = Color(0xFFFFFFFF),
         secondaryContainer = Color(0xFFF9DEC6),
         onSecondaryContainer = Color(0xFF291800),
-        // Moss, for the "Local" half of the app. Distinct from Compass so a
-        // tertiary accent never reads as a primary action.
+        // Moss, which the app spends on everything that becomes public — see
+        // publicAccent below. Distinct from Compass so it never reads as a
+        // primary action.
         tertiary = Color(0xFF4E644B),
         onTertiary = Color(0xFFFFFFFF),
         tertiaryContainer = Color(0xFFD0E9CC),
@@ -140,6 +145,67 @@ fun WayfarerTheme(
         Surface(color = colors.background, contentColor = colors.onBackground, content = content)
     }
 }
+
+/**
+ * The two colours the whole app is sorted by.
+ *
+ * Every action in Wayfarer is one of two things, and which one it is matters
+ * more than anything else on the screen it sits on: it either signs something
+ * and hands it to other people's servers, or it changes a list that never leaves
+ * this phone. Following, publishing a relay list, replying, editing a profile —
+ * public. Allowing a relay, allowing a picture server, following on this phone —
+ * local, told to nobody.
+ *
+ * The app said that in prose everywhere and drew it in one colour, so a user had
+ * to read a paragraph to learn which kind of button they were about to press.
+ * Now it is Moss for public and Trail for local, in both themes, everywhere: two
+ * accents that carry a meaning rather than a mood.
+ *
+ * Colour is never the only signal — the wording still says what happens, and the
+ * relay and picture screens keep their own glyphs — because this pair is a
+ * green and a brown, which is exactly the pair a red-green colour-blind reader
+ * separates worst.
+ */
+val ColorScheme.publicAccent: Color get() = tertiary
+
+val ColorScheme.onPublicAccent: Color get() = onTertiary
+
+val ColorScheme.publicContainer: Color get() = tertiaryContainer
+
+val ColorScheme.onPublicContainer: Color get() = onTertiaryContainer
+
+val ColorScheme.localAccent: Color get() = secondary
+
+val ColorScheme.onLocalAccent: Color get() = onSecondary
+
+val ColorScheme.localContainer: Color get() = secondaryContainer
+
+val ColorScheme.onLocalContainer: Color get() = onSecondaryContainer
+
+/** A filled button for something that will be signed and published. */
+@Composable
+fun publicButtonColors(): ButtonColors =
+    ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.publicAccent,
+        contentColor = MaterialTheme.colorScheme.onPublicAccent,
+    )
+
+/** A filled button for something that only changes this phone. */
+@Composable
+fun localButtonColors(): ButtonColors =
+    ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.localAccent,
+        contentColor = MaterialTheme.colorScheme.onLocalAccent,
+    )
+
+/** The outlined counterparts, for the same two kinds of action at lower weight. */
+@Composable
+fun publicOutlinedButtonColors(): ButtonColors =
+    ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.publicAccent)
+
+@Composable
+fun localOutlinedButtonColors(): ButtonColors =
+    ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.localAccent)
 
 /**
  * The type scale, adjusted rather than replaced.

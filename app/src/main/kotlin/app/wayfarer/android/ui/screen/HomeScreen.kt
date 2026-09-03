@@ -59,6 +59,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.PostPictures
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.publicAccent
+import app.wayfarer.android.ui.theme.publicButtonColors
 import app.wayfarer.android.viewmodel.ActivityFilter
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.BrowseMode
@@ -699,13 +701,31 @@ internal fun ThreadSection(
      * conversation rather than the replies to the post it sits under.
      */
     closedLabel: String? = null,
+    /**
+     * Whether to draw the post the conversation hangs from.
+     *
+     * True wherever this section is a way *into* a conversation rather than the
+     * replies under a post already on screen. Without it, "see the conversation"
+     * opened a list of answers with nothing being answered at the top of it —
+     * every reply, and never the post — which is a thread starting in the
+     * middle. False under a post, where drawing the root would be printing the
+     * same note twice.
+     */
+    showRoot: Boolean = false,
 ) {
     val threads by controller.threads.threads.collectAsStateWithLifecycle()
     val expandedRoots by controller.threads.expanded.collectAsStateWithLifecycle()
     val collapsed by controller.threads.collapsed.collectAsStateWithLifecycle()
+    val heldNotes by controller.allNotes.collectAsStateWithLifecycle()
+    val fetchedRoots by controller.threadRoots.collectAsStateWithLifecycle()
     val state = threads[root] ?: ThreadState()
     val expanded = root in expandedRoots
     var draft by remember(root) { mutableStateOf("") }
+
+    // Whichever store it is in, if it is in one at all. A root fetched with the
+    // thread lands in threadRoots; one the feed already had is in allNotes.
+    val rootId = (root as? ThreadRef.Event)?.id
+    val rootNote = rootId?.let { heldNotes[it] ?: fetchedRoots[it] }
 
     // This used to return early on a loaded-and-empty thread, which took the
     // reply composer with it: open a note with no replies, close it again, and
@@ -719,7 +739,8 @@ internal fun ThreadSection(
         Icon(
             WayfarerIcons.Reply,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            // Moss: everything a reply leads to is published.
+            tint = MaterialTheme.colorScheme.publicAccent,
             modifier = Modifier.size(14.dp),
         )
         Text(
@@ -732,7 +753,7 @@ internal fun ThreadSection(
                 else -> "${state.entries.size} replies"
             },
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.publicAccent,
         )
     }
 
@@ -744,10 +765,12 @@ internal fun ThreadSection(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .heightIn(max = 320.dp)
+                .heightIn(max = 420.dp)
                 .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (showRoot) ThreadRootRow(rootId, rootNote, state.loading, controller)
+
         if (state.loaded && state.entries.isEmpty()) {
             Text(
                 "Nothing here yet.",
@@ -780,6 +803,73 @@ internal fun ThreadSection(
             draft = ""
         },
     )
+}
+
+/**
+ * The post a conversation is about, at the top of it.
+ *
+ * The thing "see the conversation" was missing. A thread is fetched by asking
+ * for everything that *points at* a root, which is every reply and never the
+ * root itself, so a conversation opened from one of its replies rendered as a
+ * list of answers to nothing. `ThreadRepository.load` now asks for the root
+ * event by id as well, and this is where it lands.
+ *
+ * It can still be absent — a relay is free to hand over a reply and not the post
+ * it answers, and this app will not go hunting further — so the missing case
+ * says which post is missing rather than leaving a silent gap where it was.
+ */
+@Composable
+private fun ThreadRootRow(
+    rootId: EventId?,
+    root: Note?,
+    loading: Boolean,
+    controller: AppController,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "The post this answers",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (root == null) {
+            Text(
+                if (loading) {
+                    "Looking for it…"
+                } else {
+                    "Not on the relays you allow, so the conversation starts at the first reply below."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                PostByline(
+                    author = root.author,
+                    createdAt = root.createdAt,
+                    controller = controller,
+                    onOpenAuthor = { controller.openProfile(root.author) },
+                )
+                Text(
+                    root.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    // The whole post opens on its own screen, where it is the
+                    // subject rather than the header of somebody else's reply.
+                    modifier =
+                        rootId?.let { id ->
+                            Modifier.fillMaxWidth().clickable { controller.go(Screen.ReadNote(id)) }
+                        } ?: Modifier,
+                )
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
 }
 
 /**
@@ -856,7 +946,12 @@ internal fun ReplyComposer(
             label = { Text("Reply") },
             modifier = Modifier.weight(1f),
         )
-        Button(onClick = onSend, enabled = !posting && draft.isNotBlank()) { Text("Send") }
+        // Moss: a reply is a signed note that goes to relays.
+        Button(
+            onClick = onSend,
+            enabled = !posting && draft.isNotBlank(),
+            colors = publicButtonColors(),
+        ) { Text("Send") }
     }
 }
 
@@ -903,6 +998,9 @@ fun NoteRow(
                 rootAuthor = controller.authorOf(conversation) ?: note.author,
                 controller = controller,
                 closedLabel = controller.replyContextFor(parent) + " · see the conversation",
+                // This is a way into somebody else's conversation, so it opens
+                // with the post that conversation is about.
+                showRoot = true,
             )
         }
 
@@ -1017,7 +1115,11 @@ internal fun EventMenu(
             DropdownMenuItem(
                 text = { Text("Copy event id") },
                 onClick = {
-                    clipboard.setText(AnnotatedString(id.hex))
+                    // As `nostr:note1…` rather than as bare hex: that is the
+                    // form NIP-21 defines and the form another client — or a
+                    // post written here — can actually resolve. The hex is
+                    // still one item down, in the raw JSON.
+                    clipboard.setText(AnnotatedString(controller.shareableEventId(id)))
                     open = false
                 },
             )

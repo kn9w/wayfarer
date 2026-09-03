@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.theme.publicButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.ui.ArticleHeaderImage
 import app.wayfarer.android.ui.MarkdownBody
@@ -335,6 +336,7 @@ fun EditArticleScreen(
                 Button(
                     onClick = { controller.publishArticle(draft) },
                     enabled = !busy && draft.title.isNotBlank() && draft.content.isNotBlank(),
+                    colors = publicButtonColors(),
                 ) { Text("Publish") }
                 TextButton(onClick = { controller.back() }) { Text("Cancel") }
             }

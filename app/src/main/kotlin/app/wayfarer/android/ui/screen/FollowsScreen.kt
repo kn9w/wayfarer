@@ -1,5 +1,6 @@
 package app.wayfarer.android.ui.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -22,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.repo.FollowSource
@@ -51,9 +56,18 @@ fun FollowsScreen(controller: AppController) {
         }
 
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Two ways to follow", style = MaterialTheme.typography.titleSmall)
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Two ways to follow", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "A public follow is a signed note listing everybody you follow, which every other client can " +
                             "read. A follow kept on this phone is never published, so no other client can see it. " +
@@ -103,6 +117,9 @@ private fun FollowRow(
         // has not been asked about yet.
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(controller.displayName(person), style = MaterialTheme.typography.titleSmall)
+            // In the colour of the list it names: Moss for the signed one,
+            // Trail for the one that never leaves this phone. It is the same
+            // pair as the tabs, the follow buttons and the relay screens.
             Text(
                 when {
                     sources.containsAll(listOf(FollowSource.Published, FollowSource.Local)) ->
@@ -111,14 +128,25 @@ private fun FollowRow(
                     else -> "on this phone only"
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color =
+                    if (FollowSource.Published in sources) {
+                        MaterialTheme.colorScheme.publicAccent
+                    } else {
+                        MaterialTheme.colorScheme.localAccent
+                    },
             )
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (FollowSource.Published in sources) {
-                    TextButton(onClick = { controller.unfollowPublicly(person) }) { Text("Unfollow publicly") }
+                    TextButton(
+                        onClick = { controller.unfollowPublicly(person) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.publicAccent),
+                    ) { Text("Unfollow publicly") }
                 }
                 if (FollowSource.Local in sources) {
-                    TextButton(onClick = { controller.unfollowLocally(person) }) { Text("Remove from this phone") }
+                    TextButton(
+                        onClick = { controller.unfollowLocally(person) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.localAccent),
+                    ) { Text("Remove from this phone") }
                 }
             }
         }

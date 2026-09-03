@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.theme.localAccent
+import app.wayfarer.android.ui.theme.localButtonColors
+import app.wayfarer.android.ui.theme.localOutlinedButtonColors
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.RelayScreenState
 import app.wayfarer.core.model.DiscoveryReason
@@ -386,7 +389,9 @@ private fun ConnectedDot() {
     Box(
         Modifier
             .size(8.dp)
-            .background(MaterialTheme.colorScheme.primary, CircleShape),
+            // Trail, like everything else on this screen: a permission list
+            // that lives on this phone and is told to nobody.
+            .background(MaterialTheme.colorScheme.localAccent, CircleShape),
     )
 }
 
@@ -418,7 +423,7 @@ private fun NoRelayMatch(
                 "posting stays off until you say otherwise.",
             style = MaterialTheme.typography.bodySmall,
         )
-        OutlinedButton(onClick = onAdd) { Text("Add it, for reading") }
+        OutlinedButton(onClick = onAdd, colors = localOutlinedButtonColors()) { Text("Add it, for reading") }
     }
 }
 
@@ -512,14 +517,24 @@ private fun RelayDetailSheet(
                 RelayStatus.Waiting -> {
                     Text("Allow Wayfarer to get posts from this server?", style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            onSetPermissions(true, false)
-                            onDismiss()
-                        }) { Text("Get posts") }
-                        OutlinedButton(onClick = {
-                            onSetPermissions(true, true)
-                            onDismiss()
-                        }) { Text("And send mine") }
+                        // Trail, because answering this changes a list on this
+                        // phone and publishes nothing — the sentence at the foot
+                        // of the screen has said so all along, and now the
+                        // buttons say it too.
+                        Button(
+                            onClick = {
+                                onSetPermissions(true, false)
+                                onDismiss()
+                            },
+                            colors = localButtonColors(),
+                        ) { Text("Get posts") }
+                        OutlinedButton(
+                            onClick = {
+                                onSetPermissions(true, true)
+                                onDismiss()
+                            },
+                            colors = localOutlinedButtonColors(),
+                        ) { Text("And send mine") }
                         TextButton(onClick = {
                             onDeny()
                             onDismiss()
@@ -536,10 +551,13 @@ private fun RelayDetailSheet(
                         "Wayfarer will not connect to this relay, and stops asking about it.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    OutlinedButton(onClick = {
-                        onForget()
-                        onDismiss()
-                    }) { Text("Unblock") }
+                    OutlinedButton(
+                        onClick = {
+                            onForget()
+                            onDismiss()
+                        },
+                        colors = localOutlinedButtonColors(),
+                    ) { Text("Unblock") }
                 }
             }
 
@@ -572,7 +590,7 @@ private fun FavouriteButton(
         Icon(
             if (favourite) WayfarerIcons.Star else WayfarerIcons.StarOutline,
             contentDescription = if (favourite) "Remove from favourites" else "Add to favourites",
-            tint = if (favourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = if (favourite) MaterialTheme.colorScheme.localAccent else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
