@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
 
     /** Queried once: these are PackageManager lookups, not something to do per frame. */
     private var signerInstalled = false
+    private var signerName: String? = null
     private var cameraPresent = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,7 +46,8 @@ class MainActivity : ComponentActivity() {
                 },
             )
         wayfarerApp.nip55Bridge = nip55Bridge
-        signerInstalled = Nip55Bridge.isSignerInstalled(this)
+        signerName = Nip55Bridge.signerName(this)
+        signerInstalled = signerName != null
 
         // Same rule as above: every launcher has to be registered before STARTED.
         deviceAuthBridge =
@@ -83,6 +85,7 @@ class MainActivity : ComponentActivity() {
                                 externalSignerLogin = signerLoginFor(ready),
                                 deviceAuth = ::confirmDeviceOwner,
                                 qrScan = qrScanFor(),
+                                externalSignerName = signerName,
                             )
                         }
                 }

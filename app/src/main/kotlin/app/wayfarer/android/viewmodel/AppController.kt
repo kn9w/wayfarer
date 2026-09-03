@@ -61,6 +61,13 @@ class AppController(
     private val deviceAuth: () -> (suspend () -> DeviceAuthOutcome)? = { null },
     /** Reads a QR code with the camera, or null when no scanner is wired up. */
     private val qrScan: () -> (suspend () -> String?)? = { null },
+    /**
+     * What the installed signer app calls itself, or null when none is
+     * installed. Named on the sign-in screen: "Log in with Amber" is something a
+     * person recognises, where "use a signer app" is a category they may not know
+     * they are in.
+     */
+    private val externalSignerName: () -> String? = { null },
 ) {
     private val screenState = MutableStateFlow<Screen>(Screen.Home)
 
@@ -230,6 +237,9 @@ class AppController(
     /** True when a NIP-55 signer app is installed on this device. */
     val externalSignerAvailable: Boolean get() = externalSignerLogin() != null
 
+    /** The installed signer's own name, when this device has one and it says. */
+    val externalSignerLabel: String? get() = externalSignerName()
+
     /** True when this device can scan a QR code, which hides the button when it cannot. */
     val qrScanAvailable: Boolean get() = qrScan() != null
 
@@ -277,17 +287,32 @@ class AppController(
         // screen of the app came to be a screen you had to wait out.
         quietly {
             val restored = core.accounts.restore()
+            // Whoever this session belongs to, and what they have allowed. A
+            // guest gets an empty list that is never written down, which is why
+            // the question below has to be asked again on every launch.
+            core.scopeRelaysTo(restored?.pubKey)
+
             when {
-                restored != null -> loadSignedInAccount(restored)
-                // A user who went through the introduction and chose not to make an
-                // account is not a new user. Sending them back to the first screen on
-                // every launch would read as the app refusing to let them in.
-                core.onboarding.isComplete() -> {
+                // Nobody has been here before: the introduction, from the top.
+                restored == null && !core.onboarding.isComplete() -> onboardingState.value = OnboardingStep.Start
+
+                // Somewhere to begin is the one thing this app cannot proceed
+                // without, and a session that may reach nothing has not been
+                // given one. A user who went through the introduction is not
+                // sent back through it — they are asked the single question that
+                // is still open.
+                core.relayDirectory.grants.isEmpty() -> {
                     introduced = true
-                    loadFeed()
+                    onboardingState.value = OnboardingStep.EntryPoint
                 }
-                else -> onboardingState.value = OnboardingStep.Start
+
+                else -> introduced = true
             }
+
+            // Deferred while an onboarding step is up, and released the moment
+            // it ends. loadFeed refuses outright during onboarding, so the guest
+            // branch needs no guard of its own.
+            if (restored != null) loadSignedInAccount(restored) else loadFeed()
         }
     }
 
@@ -580,6 +605,11 @@ class AppController(
     fun createAccount() =
         run {
             val (account, nsec) = core.accounts.createAccount()
+            // Scoped before the questions rather than after them: every relay
+            // approved during the rest of onboarding has to be written down as
+            // *this* account's, or the load released at the end would replace
+            // them with the empty list it was signed up with.
+            core.scopeRelaysTo(account.pubKey)
             onboardingState.value = OnboardingStep.Backup(nsec)
             // Neither awaited nor started here. The account exists and the key
             // is on screen, which is what the press asked for; the reading waits
@@ -634,6 +664,11 @@ class AppController(
      * that is asked for rather than done.
      */
     private suspend fun afterSignIn(account: Account) {
+        // Their list, before it is asked whether the list is empty. Read before
+        // the scope changed, the question would have been answered by whatever
+        // the *previous* session — a guest, or somebody else — had allowed.
+        core.scopeRelaysTo(account.pubKey)
+
         if (core.relayDirectory.grants.isEmpty()) {
             onboardingState.value = proposeDefaults(RelayPurpose.FindAccount(account.pubKey))
             return
@@ -682,9 +717,12 @@ class AppController(
         quietly {
             core.accounts.logout()
             core.contacts.clear()
-            // Forgotten, not deleted: the list is keyed by the account that owns
-            // it and comes back when they sign in again, like their relay grants.
+            // Forgotten, not deleted: both lists are keyed by the account that
+            // owns them and come back when they sign in again. What is left on
+            // screen is a session that may talk to nothing, which is what being
+            // signed out of this app means.
             core.localFollows.clear()
+            core.scopeRelaysTo(null)
         }
     }
 
@@ -742,6 +780,10 @@ class AppController(
      * decision, and a network call finishing must never move them.
      */
     private suspend fun onSignedIn(account: Account) {
+        // Their own permissions, before anything is asked of anybody. This is
+        // also what stops one account inheriting another's: the list is keyed by
+        // the pubkey that granted it.
+        core.scopeRelaysTo(account.pubKey)
         ensureTransportStarted()
 
         core.relayListRepo.refresh(account.pubKey)?.let { core.relayListRepo.offerToDirectory(it, isOwnAccount = true) }

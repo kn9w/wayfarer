@@ -62,11 +62,25 @@ passes through it, and rejected relays are recorded as *pending* with the reason
 ("write relay of npub1abc…", "your read relay"), so the approval queue reflects your own social
 graph rather than a list the app invented.
 
+**This list belongs to whoever is signed in.** It is keyed by the account that granted it, exactly as
+the follow list kept on this phone is: signing in as somebody else starts with nothing allowed,
+logging out puts the list away rather than deleting it, and signing back in brings it back. A
+session with nobody signed in gets one that lives for the session and is never written down —
+reading without an account is supported, so the permissions have to work, but a consent record for
+nobody is not a thing to keep, and the next launch would otherwise inherit relays this session never
+approved. There is deliberately no migration from the device-wide list earlier builds kept: that
+list was the consent of whoever was holding the phone, which is not a fact about any account.
+
 **This list is local to the app.** It is not a NIP-65 relay list, it is not an event, and approving
 or blocking a relay publishes nothing and tells nobody. Advertising your relays to the network is a
 separate, explicitly requested action — see *Outbox* below — and the screen says so where the
 buttons are. (If that list ever becomes shared between a user's own devices, the natural shape is an
 encrypted private event, which is still not the same thing as NIP-65.)
+
+Because permissions go with an account, a session that may reach nothing is a normal state rather
+than a first-run one — so *Where should we start?* is asked whenever it happens: on a first launch,
+on every launch of a guest session, and on an account's first sign-in. A returning account with a
+stored list goes straight into the app.
 
 Nothing is contacted while onboarding is on screen — not the live subscription, and not the
 one-shot loads either. That distinction was a real bug rather than a nicety: relay grants are

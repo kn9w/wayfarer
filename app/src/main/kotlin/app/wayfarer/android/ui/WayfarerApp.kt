@@ -111,6 +111,8 @@ fun WayfarerApp(
     deviceAuth: (suspend () -> DeviceAuthOutcome)? = null,
     /** Scans a QR code with the camera, or null when this device cannot. */
     qrScan: (suspend () -> String?)? = null,
+    /** What the installed NIP-55 signer calls itself, or null when there is none. */
+    externalSignerName: String? = null,
 ) {
     // Held through rememberUpdatedState and read at call time. The activity passes
     // a capturing lambda, so a fresh instance arrives on every recomposition; using
@@ -119,6 +121,7 @@ fun WayfarerApp(
     val currentSignerLogin = rememberUpdatedState(externalSignerLogin)
     val currentDeviceAuth = rememberUpdatedState(deviceAuth)
     val currentQrScan = rememberUpdatedState(qrScan)
+    val currentSignerName = rememberUpdatedState(externalSignerName)
     val controller =
         remember(core) {
             AppController(
@@ -127,6 +130,7 @@ fun WayfarerApp(
                 externalSignerLogin = { currentSignerLogin.value },
                 deviceAuth = { currentDeviceAuth.value },
                 qrScan = { currentQrScan.value },
+                externalSignerName = { currentSignerName.value },
             )
         }
 

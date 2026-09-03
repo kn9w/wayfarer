@@ -552,6 +552,76 @@ class AppControllerTest {
             assertEquals(Screen.Profile(pubKey), controller.screen.value)
         }
 
+    // ---- whose relay permissions these are --------------------------------
+
+    @Test
+    fun `a guest's relay permissions do not outlive the session`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val first = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+            first.continueWithoutAccount()
+            first.skipEntryPoint()
+            runCurrent()
+            first.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+            assertEquals(1, first.relays.state.value.approved.size, "a guest can allow relays and read")
+
+            // A relaunch: the same stored settings, everything else new.
+            val second = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+
+            // Nobody granted anything in *this* session, so nothing is allowed —
+            // and the app says so by asking the one question it cannot proceed
+            // without, rather than opening onto an empty feed.
+            assertTrue(second.relays.state.value.approved.isEmpty())
+            assertEquals(OnboardingStep.EntryPoint, second.onboarding.value)
+        }
+
+    @Test
+    fun `an account's relay permissions come back with the account`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val first = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+            first.createAccount()
+            runCurrent()
+            first.finishBackup()
+            first.skipEntryPoint()
+            runCurrent()
+            first.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+
+            val second = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+
+            // Forgotten on the way out, restored on the way in — the same rule
+            // the follow list kept on this phone has always followed.
+            assertEquals(1, second.relays.state.value.approved.size)
+            assertNull(second.onboarding.value, "a session that can already reach relays is not asked again")
+        }
+
+    @Test
+    fun `logging out leaves a session that may talk to nothing`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val controller = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            controller.relays.add("wss://open.example", read = true, write = false)
+            runCurrent()
+
+            controller.logout()
+            runCurrent()
+
+            // The permissions were this account's consent, so they go with it.
+            assertTrue(controller.relays.state.value.approved.isEmpty())
+        }
+
     // ---- nothing is contacted during onboarding ---------------------------
 
     @Test

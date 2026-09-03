@@ -1,5 +1,6 @@
 package app.wayfarer.core
 
+import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.Bech32Codec
 import app.wayfarer.core.nostr.KeyTool
@@ -64,8 +65,9 @@ data class NostrBackend(
  * The composition root of the app's logic. Holds every repository and wires them
  * together; knows nothing about Android, Compose, or any UI concept.
  *
- * Construct via [Wayfarer.create], which loads persisted relay permissions and
- * seeds the pending queue with the bootstrap suggestions.
+ * Construct via [Wayfarer.create], which seeds the pending relay queue with the
+ * bootstrap suggestions. Permissions themselves belong to an account and arrive
+ * with [scopeRelaysTo].
  */
 class Wayfarer private constructor(
     val relayDirectory: RelayDirectory,
@@ -122,6 +124,20 @@ class Wayfarer private constructor(
      */
     val suggestedRelays: List<RelayUrl>,
 ) {
+    /**
+     * Points the relay permission list at whoever is signed in.
+     *
+     * Called on sign-in, on restore and on sign-out — the last with null, which
+     * leaves the session with no permissions at all until it is given some.
+     * The bootstrap suggestions are re-seeded every time, because they are what
+     * a list with nothing in it has to offer, and [RelayDirectory.note] skips
+     * anything this account has already allowed or blocked.
+     */
+    suspend fun scopeRelaysTo(account: PubKey?) {
+        relayDirectory.scopeTo(account)
+        relayDirectory.suggest(suggestedRelays)
+    }
+
     companion object {
         /**
          * Relays offered as a starting point on a fresh install.
@@ -148,11 +164,13 @@ class Wayfarer private constructor(
             outboxConfig: OutboxConfig = OutboxConfig(),
             bootstrapSuggestions: List<String> = BOOTSTRAP_SUGGESTIONS,
         ): Wayfarer {
+            // Empty until somebody is signed in: the list belongs to an
+            // account rather than to the phone, so there is nothing to load
+            // before it is known whose session this is. See RelayDirectory.scopeTo.
             val directoryStore = PersistedRelayDirectoryStore(settings, RelayDirectoryCodec(backend.normalizer))
             val directory =
                 RelayDirectory(
                     clock = backend.clock,
-                    initial = directoryStore.load(),
                     persistence = directoryStore,
                 )
 

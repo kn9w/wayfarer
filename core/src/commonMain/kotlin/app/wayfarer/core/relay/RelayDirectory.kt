@@ -3,6 +3,7 @@ package app.wayfarer.core.relay
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.PendingRelay
+import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayDirectorySnapshot
 import app.wayfarer.core.model.RelayGrant
 import app.wayfarer.core.model.RelayUrl
@@ -25,6 +26,9 @@ import kotlinx.coroutines.sync.withLock
  * `GatedWebsocketBuilder` in the `nostr-quartz` module, which refuses to open a
  * connection to any URL this directory does not approve. That is deliberate
  * belt-and-braces: a routing bug upstream still cannot leak a connection.
+ *
+ * **The list belongs to whoever is signed in.** It is not one permanent set of
+ * permissions for the device — see [scopeTo].
  */
 class RelayDirectory(
     private val clock: Clock,
@@ -34,6 +38,9 @@ class RelayDirectory(
     private val writeLock = Mutex()
 
     private val state = MutableStateFlow(initial)
+
+    /** Whose list this currently is, or null for a session with nobody signed in. */
+    private var owner: PubKey? = null
 
     /** Grants only, sorted by display name, for the settings screen. */
     val snapshot: StateFlow<RelayDirectorySnapshot> = state.asStateFlow()
@@ -189,6 +196,31 @@ class RelayDirectory(
         namedBy: String,
     ) = note(urls, DiscoveryReason(DiscoverySource.EVENT_HINT, "named by the link to $namedBy"))
 
+    /**
+     * Points the directory at [account]'s list, or at a fresh one for a session
+     * with nobody signed in.
+     *
+     * Relay permissions are a record of consent given by a person, not a
+     * property of the handset. They used to be one list for the device, kept
+     * forever and shared by every account that ever signed in — so somebody
+     * logging in as themselves inherited whatever the last user of the phone had
+     * allowed, a new account started out already talking to relays it had never
+     * been asked about, and logging out left the whole list behind. The follow
+     * list kept on this phone has always been keyed by its owner, and this is
+     * the same rule for the same reason.
+     *
+     * A guest gets a list that lives for the session and is never written down.
+     * Reading without an account is supported, so the permissions have to work;
+     * persisting them would be keeping a consent record for nobody, and would
+     * hand the next session relays it never approved.
+     */
+    suspend fun scopeTo(account: PubKey?) {
+        writeLock.withLock {
+            owner = account
+            state.value = persistence?.load(account) ?: RelayDirectorySnapshot()
+        }
+    }
+
     private suspend fun mutate(block: (RelayDirectorySnapshot) -> RelayDirectorySnapshot) {
         val updated =
             writeLock.withLock {
@@ -197,7 +229,7 @@ class RelayDirectory(
                 state.value = next
                 next
             }
-        persistence?.save(updated)
+        persistence?.save(owner, updated)
     }
 }
 
@@ -206,9 +238,19 @@ fun interface RelayAccessPolicy {
     fun isApproved(url: RelayUrl): Boolean
 }
 
-/** Persistence for the relay directory. Implemented per platform. */
+/**
+ * Persistence for the relay directory, per account.
+ *
+ * [owner] is the account the list belongs to, or null for a session with nobody
+ * signed in. A guest's permissions are deliberately not durable — see
+ * [RelayDirectory.scopeTo] — so an implementation is expected to keep nothing at
+ * all for a null owner.
+ */
 interface RelayDirectoryStore {
-    suspend fun load(): RelayDirectorySnapshot
+    suspend fun load(owner: PubKey?): RelayDirectorySnapshot
 
-    suspend fun save(snapshot: RelayDirectorySnapshot)
+    suspend fun save(
+        owner: PubKey?,
+        snapshot: RelayDirectorySnapshot,
+    )
 }

@@ -75,9 +75,25 @@ class Nip55Bridge(
          * Requires the `<queries>` declaration for the `nostrsigner` scheme in the
          * manifest; without it this silently returns false on API 30 and above.
          */
-        fun isSignerInstalled(context: Context): Boolean {
+        fun isSignerInstalled(context: Context): Boolean = signerName(context) != null
+
+        /**
+         * What the installed signer calls itself, or null when there is none.
+         *
+         * The name is worth having on the sign-in screen: "Log in with Amber" is
+         * a thing somebody recognises, where "use a signer app" is a category
+         * they may not know they are already in. The first match is taken —
+         * NIP-55 has no notion of a preferred signer, and the chooser appears
+         * anyway if more than one can handle the intent.
+         *
+         * Requires the `<queries>` declaration for the `nostrsigner` scheme in
+         * the manifest; without it this silently returns null on API 30 and above.
+         */
+        fun signerName(context: Context): String? {
             val probe = Intent(Intent.ACTION_VIEW, Uri.parse("${Nip55Protocol.SCHEME}:"))
-            return context.packageManager.queryIntentActivities(probe, 0).isNotEmpty()
+            val manager = context.packageManager
+            val match = manager.queryIntentActivities(probe, 0).firstOrNull() ?: return null
+            return match.loadLabel(manager).toString().takeIf { it.isNotBlank() }
         }
     }
 }

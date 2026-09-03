@@ -106,28 +106,42 @@ private fun StartScreen(
         HorizontalDivider()
         Text("Already have an account?", style = MaterialTheme.typography.titleSmall)
 
-        // Always shown, and disabled when there is nothing to talk to. It used
-        // to be hidden outright on a phone with no signer app installed, which
-        // is the majority of phones — so the safest way to log in was invisible
-        // to everybody who had not already found it, and there was nothing on
+        // First, and named. A signer is the way to log in that never hands this
+        // app a key, so it leads — and it is shown on phones without one too,
+        // because it used to be hidden outright there: the safest option was
+        // invisible to everybody who had not already found it, with nothing on
         // screen to say it existed or what would make it appear.
         val signer = controller.externalSignerAvailable
-        OutlinedButton(
-            onClick = controller::loginWithExternalSigner,
-            enabled = !busy && signer,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Use a signer app")
+        val signerName = controller.externalSignerLabel
+
+        if (signer) {
+            Button(
+                onClick = controller::loginWithExternalSigner,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (signerName != null) "Log in with $signerName" else "Log in with a signer app")
+            }
+            Text(
+                "Recommended. Your key stays in ${signerName ?: "that app"} (NIP-55): Wayfarer never sees it, and " +
+                    "you approve every signature there.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else {
+            OutlinedButton(
+                onClick = controller::loginWithExternalSigner,
+                enabled = false,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Log in with a signer app")
+            }
+            Text(
+                "Recommended, and the safest way in — but no signer app was found on this phone. A signer " +
+                    "(NIP-55) holds your key and approves each signature, so no app you log into with it, this " +
+                    "one included, ever sees the key itself. Install one and it appears here.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
-        Text(
-            if (signer) {
-                "Your key stays in that app (NIP-55). Wayfarer never sees it, and you approve every signature there."
-            } else {
-                "Greyed out because no signer app was found on this phone. A signer (NIP-55) holds your key and " +
-                    "approves each signature, so Wayfarer never sees it — install one and it will appear here."
-            },
-            style = MaterialTheme.typography.bodySmall,
-        )
 
         OutlinedTextField(
             value = key,

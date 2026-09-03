@@ -76,6 +76,7 @@ import app.wayfarer.core.relay.RelayInfoService
 @Composable
 fun RelayScreen(controller: AppController) {
     val state by controller.relays.state.collectAsStateWithLifecycle()
+    val account by controller.account.collectAsStateWithLifecycle()
     val connected by controller.connectedRelays.collectAsStateWithLifecycle()
     val relayInfo by controller.relayInfo.collectAsStateWithLifecycle()
     val infoPrompt by controller.relayInfoPrompt.collectAsStateWithLifecycle()
@@ -202,7 +203,7 @@ fun RelayScreen(controller: AppController) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
-            item { RelayScreenFooter() }
+            item { RelayScreenFooter(signedIn = account != null) }
         }
     }
 }
@@ -598,7 +599,7 @@ private fun FavouriteButton(
 // ---- footer -------------------------------------------------------------
 
 @Composable
-private fun RelayScreenFooter() {
+private fun RelayScreenFooter(signedIn: Boolean) {
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -615,6 +616,18 @@ private fun RelayScreenFooter() {
         Text(
             "This list lives on this phone. Changing it publishes nothing and tells nobody.",
             style = MaterialTheme.typography.bodySmall,
+        )
+        // Whose list it is, which is now a real question with two answers.
+        Text(
+            if (signedIn) {
+                "It belongs to the account you are signed in as. Logging out puts it away — signing back in " +
+                    "brings it back — and another account starts with nothing allowed."
+            } else {
+                "You are not signed in, so this list is kept for this session only. Nothing is written down, " +
+                    "and next time Wayfarer will ask where to start again."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

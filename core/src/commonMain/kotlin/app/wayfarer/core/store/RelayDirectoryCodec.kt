@@ -3,6 +3,7 @@ package app.wayfarer.core.store
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.PendingRelay
+import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayDirectorySnapshot
 import app.wayfarer.core.model.RelayGrant
 import app.wayfarer.core.model.RelayUrl
@@ -113,13 +114,35 @@ class RelayDirectoryCodec(
     }
 }
 
-/** [RelayDirectoryStore] on top of a [KeyValueStore] and [RelayDirectoryCodec]. */
+/**
+ * [RelayDirectoryStore] on top of a [KeyValueStore] and [RelayDirectoryCodec].
+ *
+ * One record per account, and none at all for a guest. The key carries the
+ * owner's pubkey, so signing in as somebody else reads their list rather than
+ * inheriting the last one, and a session with nobody signed in keeps its
+ * permissions in memory only — see [RelayDirectory.scopeTo].
+ *
+ * The old device-wide key is not read or migrated. It named a list that
+ * belonged to nobody in particular, which is the thing being fixed; carrying it
+ * forward would hand it to whichever account happened to sign in first.
+ */
 class PersistedRelayDirectoryStore(
     private val store: KeyValueStore,
     private val codec: RelayDirectoryCodec,
-    private val key: String = "relay.directory.v1",
+    private val prefix: String = "relay.directory.v2.",
 ) : RelayDirectoryStore {
-    override suspend fun load(): RelayDirectorySnapshot = codec.decode(store.getString(key))
+    override suspend fun load(owner: PubKey?): RelayDirectorySnapshot {
+        val key = keyFor(owner) ?: return RelayDirectorySnapshot()
+        return codec.decode(store.getString(key))
+    }
 
-    override suspend fun save(snapshot: RelayDirectorySnapshot) = store.putString(key, codec.encode(snapshot))
+    override suspend fun save(
+        owner: PubKey?,
+        snapshot: RelayDirectorySnapshot,
+    ) {
+        val key = keyFor(owner) ?: return
+        store.putString(key, codec.encode(snapshot))
+    }
+
+    private fun keyFor(owner: PubKey?): String? = owner?.let { "$prefix${it.hex}" }
 }
