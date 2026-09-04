@@ -16,7 +16,7 @@ import okhttp3.OkHttpClient
  * `RelayInfoService`.
  */
 class QuartzRelayInfoFetcher(
-    okHttpClient: OkHttpClient = QuartzRelayTransport.defaultOkHttpClient(),
+    okHttpClient: OkHttpClient = nip11Client(),
 ) : RelayInfoFetcher {
     private val fetcher = CachedNip11Fetcher(OkHttpNip11Fetcher { okHttpClient })
 
@@ -38,5 +38,28 @@ class QuartzRelayInfoFetcher(
             postingPolicy = document.posting_policy?.takeIf { it.isNotBlank() },
             paymentsUrl = document.payments_url?.takeIf { it.isNotBlank() },
         )
+    }
+
+    companion object {
+        /**
+         * The transport's client, with redirects switched off.
+         *
+         * The consent this request spends is for a named host — the dialog says
+         * which one, and the user pressed "Fetch relay info" against that name.
+         * A redirect spends it somewhere else: a 302 to any third party, which
+         * then has the user's IP address without ever having appeared on the
+         * approval screen. `followSslRedirects` goes too, or the https-to-http
+         * case would survive on its own.
+         *
+         * Built with `newBuilder` so the connection pool and dispatcher are
+         * shared with the websocket client rather than duplicated.
+         */
+        fun nip11Client(): OkHttpClient =
+            QuartzRelayTransport
+                .defaultOkHttpClient()
+                .newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
     }
 }

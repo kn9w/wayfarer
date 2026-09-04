@@ -24,6 +24,17 @@ data class OutboxConfig(
     /** Ceiling on relays a single publish fans out to. */
     val maxPublishRelays: Int = 20,
     /**
+     * Relays a discovery query may be spread across.
+     *
+     * Discovery is the one read with no author routing to narrow it — it is
+     * asked precisely because nothing is known yet about where these authors
+     * publish — so without a ceiling it reaches every approved read relay. See
+     * [OutboxRouter.discoveryPlanFor].
+     */
+    val maxDiscoveryRelays: Int = 4,
+    /** How many discovery relays are asked about any one author. */
+    val discoveryRedundancy: Int = 2,
+    /**
      * What to do about an author who has published no kind 10002 at all.
      *
      * Strictly, the outbox model has no answer: without a relay list there is no
@@ -265,13 +276,48 @@ class OutboxRouter(
 
     private fun approvedReadRelays(): Set<RelayUrl> = directory.grants.values.filter { it.read }.mapTo(mutableSetOf()) { it.url }
 
-    /** A discovery plan for the relay lists and profiles of [authors]. */
+    /**
+     * A discovery plan for the relay lists and profiles of [authors].
+     *
+     * Sharded, and that is the point of it. The obvious implementation sends one
+     * filter naming every author to every approved read relay, which hands each
+     * of them the reader's whole follow list — the exact disclosure the outbox
+     * model avoids everywhere else, arriving through the back door of the query
+     * that bootstraps it, at every launch. A relay learns little from being asked
+     * about an author it serves. It learns a great deal from being asked about
+     * all of them at once.
+     *
+     * So authors are dealt round-robin across a capped, deterministically ordered
+     * slice of the approved read relays, [OutboxConfig.discoveryRedundancy] relays
+     * each, and every author is still asked of two independent relays. At the
+     * default cap of four that is half the list per relay, two thirds at three,
+     * and no gain at all below that — which is the shape of the problem rather
+     * than a shortcoming: somebody who has approved one relay has one relay to
+     * ask.
+     *
+     * Deterministic rather than shuffled. A fresh partition on every refresh
+     * would, over a handful of them, tell every relay everything anyway.
+     */
     fun discoveryPlanFor(
         authors: Set<PubKey>,
         kinds: List<Int>,
     ): Map<RelayUrl, List<ReqFilter>> {
         if (authors.isEmpty()) return emptyMap()
-        val filter = ReqFilter(authors = authors.map { it.hex }.sorted(), kinds = kinds)
-        return discoveryRelays().associateWith { listOf(filter) }
+
+        val relays = discoveryRelays().sorted().take(config.maxDiscoveryRelays)
+        if (relays.isEmpty()) return emptyMap()
+
+        val perRelay = mutableMapOf<RelayUrl, MutableList<String>>()
+        val spread = minOf(config.discoveryRedundancy, relays.size)
+        for ((index, author) in authors.sortedBy { it.hex }.withIndex()) {
+            for (step in 0 until spread) {
+                val relay = relays[(index + step) % relays.size]
+                perRelay.getOrPut(relay) { mutableListOf() } += author.hex
+            }
+        }
+
+        return perRelay.mapValues { (_, assigned) ->
+            listOf(ReqFilter(authors = assigned.sorted(), kinds = kinds))
+        }
     }
 }

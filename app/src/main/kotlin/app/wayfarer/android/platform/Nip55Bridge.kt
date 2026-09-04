@@ -160,6 +160,12 @@ class Nip55Signer(
      * Tags are deliberately not compared. Signers legitimately add their own —
      * a client tag is the common case — and rejecting those would break working
      * setups to catch nothing that the pubkey and signature checks miss.
+     *
+     * `created_at` is compared, because it has no such excuse and it is not
+     * cosmetic: for the replaceable kinds this app writes, a far-future
+     * timestamp is what decides which copy every other client keeps, so a signer
+     * free to move it is a signer free to pin one version of a profile or relay
+     * list in place for good.
      */
     private fun checkMatches(
         signed: NostrEvent,
@@ -168,7 +174,7 @@ class Nip55Signer(
         if (signed.pubKey.hex != pubKeyHex) {
             throw IllegalStateException("The signer app returned an event signed by a different account")
         }
-        if (signed.kind != asked.kind || signed.content != asked.content) {
+        if (signed.kind != asked.kind || signed.content != asked.content || signed.createdAt != asked.createdAt) {
             throw IllegalStateException("The signer app returned a different event than the one it was asked to sign")
         }
         if (!codec.verify(signed)) {

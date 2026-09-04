@@ -214,4 +214,59 @@ class OutboxRouterTest {
 
             assertEquals(3, plan.plan.size)
         }
+
+    @Test
+    fun `discovery does not hand every relay the whole follow list`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            repeat(6) { directory.approve(relay("d$it.example"), read = true, write = false) }
+            val router = OutboxRouter(RelayListCache(), directory)
+
+            val authors = (10..49).mapTo(mutableSetOf()) { pubKey(it) }
+            val plan = router.discoveryPlanFor(authors, kinds = listOf(0))
+
+            // Capped, so approving more relays widens the reach of a query
+            // without widening what any one of them is told.
+            assertEquals(4, plan.size)
+            for ((relayUrl, filters) in plan) {
+                val asked = filters.single().authors.orEmpty()
+                assertTrue(
+                    asked.size < authors.size,
+                    "$relayUrl was handed the whole follow list, which is what sharding exists to prevent",
+                )
+            }
+        }
+
+    @Test
+    fun `every author discovery asks about reaches more than one relay`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            repeat(4) { directory.approve(relay("d$it.example"), read = true, write = false) }
+            val router = OutboxRouter(RelayListCache(), directory)
+
+            val authors = (10..29).mapTo(mutableSetOf()) { pubKey(it) }
+            val plan = router.discoveryPlanFor(authors, kinds = listOf(0))
+
+            // Sharding must not become a single point of failure: a relay that
+            // has never heard of somebody would otherwise lose them outright.
+            for (author in authors) {
+                val serving = plan.values.count { author.hex in it.single().authors.orEmpty() }
+                assertEquals(2, serving, "${author.abbreviated()} was asked of $serving relays")
+            }
+        }
+
+    @Test
+    fun `discovery with one approved relay still asks it for everybody`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            directory.approve(relay("only.example"), read = true, write = false)
+            val router = OutboxRouter(RelayListCache(), directory)
+
+            val plan = router.discoveryPlanFor(setOf(alice, bob), kinds = listOf(0))
+
+            // Nothing to spread across. Sharding is a gain where there are relays
+            // to shard over, never a reason to fetch less than was asked for.
+            assertEquals(1, plan.size)
+            assertEquals(setOf(alice.hex, bob.hex), plan.values.single().single().authors.orEmpty().toSet())
+        }
 }

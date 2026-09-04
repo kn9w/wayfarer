@@ -37,7 +37,8 @@ explicitly approved by the user.
   explicit press.
 - **Nothing is queried behind your back** — whenever the app would have to fall back to the relays
   it ships with, it names them first and offers a field to use one of your own instead. Starting
-  points can be typed or scanned from a QR code.
+  points can be typed or scanned from a QR code — and a scanned one is named back to you before it
+  is approved, because you have read what you typed and have not read what a code decoded to.
 
 ## Architecture
 
@@ -151,7 +152,8 @@ computes relay sets is one routing bug away from being false.
 
 Reading a relay's NIP-11 document is an HTTPS request to that relay, so it is treated as a separate
 consent: it happens only when you tap "Fetch relay info", and for a relay with no grant a dialog
-names the host first.
+names the host first. It does not follow redirects — the consent was for the host in that dialog,
+and a 302 would spend it on somebody else who then has your IP address.
 
 ## Pictures, and the servers they come from
 
@@ -231,6 +233,10 @@ because green against brown is precisely the pair a red-green colour-blind reade
 
 - Read an author's events from their advertised *write* relays; each relay is asked only for the
   authors it serves.
+- Discovery — the query for an author whose relay list is not known yet, which is the one read with
+  no author routing to narrow it — is sharded rather than broadcast. One filter naming every author,
+  sent to every approved relay, hands each of them the whole follow list; authors are dealt across a
+  capped set of relays instead, two relays each, so no single relay is told everything.
 - Publish to your write relays **and** each mentioned user's *read* relays. Mentions are parsed
   from the note text.
 - Relay selection is a greedy set cover (`RelayCoverage`) with a redundancy target and a relay

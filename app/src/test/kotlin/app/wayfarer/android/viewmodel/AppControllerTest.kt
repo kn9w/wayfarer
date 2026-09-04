@@ -1095,7 +1095,7 @@ class AppControllerTest {
 
             val step = controller.onboarding.value
             assertTrue(step is OnboardingStep.ApproveRelays)
-            assertTrue(step.areAppDefaults, "the user must be told these are the app's guess, not theirs")
+            assertEquals(RelayOrigin.AppDefaults, step.origin, "the user must be told these are the app's guess")
             assertEquals(core.suggestedRelays, step.relays)
             assertTrue(transport.fetched.isEmpty(), "finding the account must not start before consent")
         }
@@ -1115,7 +1115,7 @@ class AppControllerTest {
 
             val step = controller.onboarding.value
             assertTrue(step is OnboardingStep.ApproveRelays)
-            assertTrue(step.areAppDefaults)
+            assertEquals(RelayOrigin.AppDefaults, step.origin)
             assertEquals(RelayPurpose.FindPerson(pubKey, npub), step.purpose)
             assertTrue(core.relayDirectory.grants.isEmpty(), "the warning must come before the grant")
         }
@@ -1133,7 +1133,7 @@ class AppControllerTest {
 
             val step = controller.onboarding.value
             assertTrue(step is OnboardingStep.ApproveRelays)
-            assertFalse(step.areAppDefaults)
+            assertEquals(RelayOrigin.NamedByLink, step.origin)
             assertEquals(listOf(RelayUrl("wss://hinted.example/")), step.relays)
         }
 
@@ -1204,7 +1204,7 @@ class AppControllerTest {
         }
 
     @Test
-    fun `a scanned code is treated exactly like a typed one`() =
+    fun `a scanned relay is named before it is approved`() =
         runTest {
             val core = wayfarer()
             val controller =
@@ -1220,7 +1220,49 @@ class AppControllerTest {
             controller.scanEntryPoint()
             runCurrent()
 
+            // The user pointed a camera at something; they have not read what it
+            // decoded to. Nothing is granted and no socket can open until they have.
+            assertTrue(core.relayDirectory.grants.isEmpty())
+            val step = controller.onboarding.value
+            assertTrue(step is OnboardingStep.ApproveRelays)
+            assertEquals(RelayOrigin.Scanned, step.origin)
+            assertEquals(listOf(RelayUrl("wss://scanned.example/")), step.relays)
+        }
+
+    @Test
+    fun `a scanned relay is granted once the user has seen it`() =
+        runTest {
+            val core = wayfarer()
+            val controller =
+                AppController(
+                    core,
+                    TestScope(testScheduler),
+                    qrScan = { { "wss://scanned.example" } },
+                )
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.scanEntryPoint()
+            runCurrent()
+
+            controller.approveProposedRelays()
+            runCurrent()
+
             assertTrue(core.relayDirectory.grants.containsKey(RelayUrl("wss://scanned.example/")))
+        }
+
+    @Test
+    fun `a typed relay needs no second confirmation`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+
+            // Typing an address is itself the act of reading it.
+            controller.submitEntryPoint("wss://typed.example")
+            runCurrent()
+
+            assertTrue(core.relayDirectory.grants.containsKey(RelayUrl("wss://typed.example/")))
         }
 
     // ---- pictures, and the servers they would come from --------------------

@@ -489,7 +489,7 @@ class AppController(
             val scan = qrScan() ?: return@run
             // Null is a cancelled scan, which is not an error worth a banner.
             val scanned = scan() ?: return@run
-            handleEntryPoint(scanned)
+            handleEntryPoint(scanned, wasScanned = true)
         }
 
     /** Approves the relays the current step names, then does what it was for. */
@@ -517,7 +517,20 @@ class AppController(
         onboardingState.value = proposeDefaults(RelayPurpose.Browse)
     }
 
-    private suspend fun handleEntryPoint(input: String) {
+    /**
+     * [wasScanned] is the difference between a code and a typed address.
+     *
+     * Typing a relay address is itself the act of reading it, so approving what
+     * was typed adds nothing. A scan is the opposite: the user has pointed a
+     * camera at something and the app has decoded a host they have never seen.
+     * So a scanned relay goes through the same consent screen an `nprofile`'s
+     * hints already go through — named first, approved second — rather than
+     * being granted and dialled on the strength of the scan.
+     */
+    private suspend fun handleEntryPoint(
+        input: String,
+        wasScanned: Boolean = false,
+    ) {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return
 
@@ -530,19 +543,30 @@ class AppController(
                     // and the user gets to know who that is before it happens.
                     proposeDefaults(purpose)
                 } else {
-                    OnboardingStep.ApproveRelays(purpose, hints, areAppDefaults = false)
+                    OnboardingStep.ApproveRelays(purpose, hints, RelayOrigin.NamedByLink)
                 }
             return
         }
 
         if (looksLikeRelay(trimmed)) {
-            val url = core.addRelay(trimmed, read = true, write = false)
-            if (url != null) {
-                // The account load released by completeOnboarding ends in a feed
-                // load of its own, so asking for one here as well would be the
-                // same query twice on the first screen after setup.
-                if (!completeOnboarding()) loadFeed()
-                return
+            if (wasScanned) {
+                // Normalized so the user is shown the address the app would
+                // actually dial, but not approved: the grant is approveProposedRelays,
+                // one screen and one press later.
+                core.normalizer.normalize(trimmed)?.let { url ->
+                    onboardingState.value =
+                        OnboardingStep.ApproveRelays(RelayPurpose.Browse, listOf(url), RelayOrigin.Scanned)
+                    return
+                }
+            } else {
+                val url = core.addRelay(trimmed, read = true, write = false)
+                if (url != null) {
+                    // The account load released by completeOnboarding ends in a feed
+                    // load of its own, so asking for one here as well would be the
+                    // same query twice on the first screen after setup.
+                    if (!completeOnboarding()) loadFeed()
+                    return
+                }
             }
         }
         messageState.value = UserMessage.Error(notARelay(trimmed))
@@ -564,7 +588,7 @@ class AppController(
     }
 
     private fun proposeDefaults(purpose: RelayPurpose) =
-        OnboardingStep.ApproveRelays(purpose, core.suggestedRelays, areAppDefaults = true)
+        OnboardingStep.ApproveRelays(purpose, core.suggestedRelays, RelayOrigin.AppDefaults)
 
     private suspend fun continueWith(purpose: RelayPurpose) {
         when (purpose) {
@@ -1909,14 +1933,32 @@ sealed interface OnboardingStep {
      * Consent for the relays the next step would talk to.
      *
      * The one place this app proposes relays of its own, and it says so:
-     * [areAppDefaults] is the difference between "the link you pasted names
-     * these" and "we have nowhere else to look".
+     * [origin] is the difference between "the link you pasted names these", "you
+     * pointed a camera at this one" and "we have nowhere else to look".
      */
     data class ApproveRelays(
         val purpose: RelayPurpose,
         val relays: List<RelayUrl>,
-        val areAppDefaults: Boolean,
+        val origin: RelayOrigin,
     ) : OnboardingStep
+}
+
+/**
+ * Where the relays on a consent screen came from.
+ *
+ * Three answers rather than two, because a scanned code is not a typed one. A
+ * person who types `wss://relay.example.com` has read it. A person who points a
+ * camera at a sticker has not, and a QR code can encode any host at all.
+ */
+enum class RelayOrigin {
+    /** The relays this build ships with. Wayfarer's own guess, and it says so. */
+    AppDefaults,
+
+    /** Carried by an `nprofile` the user opened. A claim by whoever wrote the link. */
+    NamedByLink,
+
+    /** Decoded from a QR code, and not yet seen by the person who scanned it. */
+    Scanned,
 }
 
 /** What a set of relays is about to be queried *for*. */

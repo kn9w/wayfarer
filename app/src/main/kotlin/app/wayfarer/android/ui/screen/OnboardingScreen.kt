@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -30,7 +31,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.password
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.platform.SecureScreen
@@ -41,6 +45,7 @@ import app.wayfarer.android.ui.WayfarerProgressBar
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Introduction
 import app.wayfarer.android.viewmodel.OnboardingStep
+import app.wayfarer.android.viewmodel.RelayOrigin
 import app.wayfarer.android.viewmodel.RelayPurpose
 
 /**
@@ -175,7 +180,13 @@ private fun StartScreen(
             singleLine = true,
             isError = keyError != null,
             supportingText = keyError?.let { { Text(it) } },
-            modifier = Modifier.fillMaxWidth(),
+            // Not masked: half of what belongs here is an npub, which is public,
+            // and hiding a pasted key helps nobody check they pasted it right.
+            // The password keyboard type is the part that matters — it is what
+            // keeps an nsec out of the keyboard's learned dictionary and away
+            // from autofill, which would otherwise be offered it to save.
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+            modifier = Modifier.fillMaxWidth().semantics { password() },
         )
         OutlinedButton(
             onClick = {
@@ -304,7 +315,11 @@ fun BackupScreen(
             onValueChange = {},
             readOnly = true,
             label = { Text("nsec") },
-            modifier = Modifier.fillMaxWidth(),
+            // Shown in full — reading it is the whole purpose of this screen —
+            // but still declared a password field, which is what keeps it out of
+            // autofill's reach and the keyboard's history.
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+            modifier = Modifier.fillMaxWidth().semantics { password() },
         )
         Text(
             "Save it in a password manager, or write it down. It is encrypted on this phone by Android's " +
@@ -422,7 +437,11 @@ private fun ApproveRelaysScreen(
 
     Page {
         Text(
-            if (step.areAppDefaults) "Wayfarer needs somewhere to ask" else "This link names its own relays",
+            when (step.origin) {
+                RelayOrigin.AppDefaults -> "Wayfarer needs somewhere to ask"
+                RelayOrigin.NamedByLink -> "This link names its own relays"
+                RelayOrigin.Scanned -> "That code points at a relay"
+            },
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(purposeExplanation(step), style = MaterialTheme.typography.bodyMedium)
@@ -481,8 +500,10 @@ private fun ApproveRelaysScreen(
 
 private fun purposeExplanation(step: OnboardingStep.ApproveRelays): String =
     when (val purpose = step.purpose) {
+        // Never Scanned: a scanned nprofile carries its own hints and arrives as
+        // NamedByLink, and a bare one falls back to the app's own relays.
         is RelayPurpose.FindPerson ->
-            if (step.areAppDefaults) {
+            if (step.origin == RelayOrigin.AppDefaults) {
                 "An npub says who somebody is, but not where they post. To find ${purpose.npub.take(12)}… " +
                     "Wayfarer would have to ask the relays it ships with, listed below — they are its guess, " +
                     "not that person's own."
@@ -495,6 +516,11 @@ private fun purposeExplanation(step: OnboardingStep.ApproveRelays): String =
                 "Nothing is approved yet, so all it has are the relays it ships with, listed below. If you " +
                 "know which relays you use, name one instead — it will find the rest from there."
         RelayPurpose.Browse ->
-            "These are the relays Wayfarer ships with. They are a starting point, not a recommendation, and " +
-                "nothing has been contacted yet."
+            if (step.origin == RelayOrigin.Scanned) {
+                "A QR code can name any server at all, and you have not read this one — the app decoded it, " +
+                    "you did not. Nothing has been contacted yet. The address is below."
+            } else {
+                "These are the relays Wayfarer ships with. They are a starting point, not a recommendation, " +
+                    "and nothing has been contacted yet."
+            }
     }
