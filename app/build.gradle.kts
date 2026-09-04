@@ -73,7 +73,18 @@ android {
     sourceSets.getByName("test").kotlin.srcDir("../core/src/testFixtures/kotlin")
 
     packaging {
-        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+        resources.excludes +=
+            setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                // Kotlin's module metadata, dropped rather than shipped. It
+                // maps top-level declarations for Kotlin reflection, which this
+                // app does not use, and its name comes from whichever module
+                // produced it — so one dependency naming itself awkwardly is
+                // enough to make an app bundle that bundletool refuses. `core`
+                // names itself explicitly for that reason; this covers every
+                // jar that does not.
+                "META-INF/*.kotlin_module",
+            )
     }
 }
 

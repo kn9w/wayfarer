@@ -14,7 +14,19 @@ kotlin {
     // which is the same rule that lets an Android app depend on any plain
     // Kotlin/JVM library. Adding iosArm64()/iosSimulatorArm64() here is still all
     // that is needed to take the core to iOS.
-    jvm()
+    jvm {
+        compilerOptions {
+            // Named, rather than derived from the Gradle path. The default is
+            // built from the project path, which contains a colon — and the
+            // `.kotlin_module` file it names goes into the APK and the app
+            // bundle. A zip tolerates a colon in an entry name; bundletool
+            // rejects it outright, so `assembleRelease` passed and
+            // `bundleRelease` failed with "Entry name contains invalid
+            // characters", which is a tag-time discovery for a build that had
+            // been green for weeks.
+            moduleName.set("wayfarer-core")
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {

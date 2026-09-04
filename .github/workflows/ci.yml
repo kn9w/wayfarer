@@ -124,10 +124,16 @@ jobs:
 
       # Proves R8 runs clean against the real dependency graph. A release build
       # that only happens at release time is a release-day problem.
-      - name: Assemble the release APK (unsigned)
+      #
+      # Both outputs, and the bundle is not redundant. An APK is a zip and will
+      # carry an entry name a zip permits; an app bundle is validated by
+      # bundletool, which is stricter. Building only the APK here is how a
+      # `.kotlin_module` named after a Gradle path — colon and all — stayed
+      # invisible until a tag tried to produce the AAB.
+      - name: Assemble the release APK and bundle (unsigned)
         run: |
           set -o pipefail
-          ./gradlew --no-daemon :app:assembleRelease 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ./gradlew --no-daemon :app:assembleRelease :app:bundleRelease 2>&1 | tee -a "$RUNNER_TEMP/build.log"
 
       - name: Android Lint
         run: |
