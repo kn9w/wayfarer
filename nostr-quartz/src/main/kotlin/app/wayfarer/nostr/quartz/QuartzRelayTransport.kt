@@ -70,6 +70,34 @@ class QuartzRelayTransport(
 
     override fun stop() = client.disconnect()
 
+    /**
+     * Closes sockets to relays whose grant has just been withdrawn.
+     *
+     * Implemented as a bounce of the whole pool rather than a per-relay close,
+     * because Quartz's client exposes no way to reach into it and drop one
+     * socket. That is blunt, and it is safe in exactly the way that matters:
+     * [GatedWebsocketBuilder] refuses to dial anything unapproved, so the
+     * relays that come back are by definition the ones still permitted, and the
+     * revoked one cannot be among them. Over-closing costs a reconnection;
+     * under-closing would leave a relay holding the user's IP address after
+     * consent for it was taken away.
+     *
+     * The re-dial is deliberate rather than left to the caller. Withdrawing one
+     * grant must not look like going offline, and the interface's contract is
+     * that only the named relays end up disconnected.
+     *
+     * Cheap in the case that matters: with nothing from [relays] connected there
+     * is nothing to bounce, so approving a relay — by far the more common
+     * direction — never disturbs a live socket.
+     */
+    override fun disconnect(relays: Set<RelayUrl>) {
+        if (relays.isEmpty()) return
+        if (connected.value.none { it in relays }) return
+
+        client.disconnect()
+        client.connect()
+    }
+
     override fun subscribe(plan: Map<RelayUrl, List<ReqFilter>>): Flow<ReceivedEvent> =
         callbackFlow {
             val quartzPlan = plan.toQuartz()

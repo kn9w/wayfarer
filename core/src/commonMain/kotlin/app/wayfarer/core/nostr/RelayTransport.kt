@@ -53,6 +53,24 @@ interface RelayTransport {
     fun start()
 
     fun stop()
+
+    /**
+     * Closes any socket currently open to [relays].
+     *
+     * The approval gate is otherwise a *dial-time* check: it decides whether a
+     * connection may be opened and has nothing to say about one that already
+     * is. That left revocation half-implemented — withdrawing a grant stopped
+     * new `REQ`s from being routed to that relay, but the websocket the app was
+     * already holding stayed up, pinging, until the session ended. The relay
+     * kept the user's IP address and an open connection after consent for it
+     * was taken away, which is not what pressing "block" means.
+     *
+     * Called whenever a grant is reduced or removed. Implementations may drop
+     * more than they were asked to — the gate refuses to re-dial anything
+     * unapproved, so over-closing costs a reconnection and never a leak — but
+     * must not leave a named relay connected.
+     */
+    fun disconnect(relays: Set<RelayUrl>)
 }
 
 /** A NIP-01 REQ filter. */

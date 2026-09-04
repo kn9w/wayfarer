@@ -116,6 +116,14 @@ class FakeTransport(
         stopCount++
         connectedRelays.value = emptySet()
     }
+
+    /** Every relay set the app asked to be disconnected, in order. */
+    val disconnected = mutableListOf<Set<RelayUrl>>()
+
+    override fun disconnect(relays: Set<RelayUrl>) {
+        disconnected += relays
+        connectedRelays.value = connectedRelays.value - relays
+    }
 }
 
 /**

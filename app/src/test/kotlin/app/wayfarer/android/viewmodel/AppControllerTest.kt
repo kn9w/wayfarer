@@ -1465,6 +1465,70 @@ class AppControllerTest {
             assertTrue(transport.fetched.size > before, "the feed must reload against the new permission")
         }
 
+    /**
+     * Blocking a relay has to reach the socket, not just the routing plan.
+     *
+     * The approval gate is a dial-time check: it refuses to *open* a connection
+     * to an unapproved relay and has nothing to say about one already open. So
+     * revoking a grant used to stop the relay being asked for anything while
+     * leaving its websocket up — pinging, and still holding the reader's IP
+     * address — until the account switched or the app was backgrounded. That is
+     * not what the button says it does.
+     */
+    @Test
+    fun `blocking a relay closes the socket already open to it`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            val url = RelayUrl("wss://suggested.example/")
+            controller.relays.setPermissions(url, read = true, write = false)
+            runCurrent()
+            transport.connectedRelays.value = setOf(url)
+
+            controller.relays.deny(url)
+            runCurrent()
+
+            assertTrue(
+                transport.disconnected.any { url in it },
+                "revoking a grant must close the connection, not only stop routing to it",
+            )
+            assertFalse(url in transport.connectedRelays.value)
+        }
+
+    /**
+     * The far more common direction must not cost anything.
+     *
+     * Approving a relay happens constantly as the queue is worked through, and
+     * every one of those presses runs the same code path. Dropping live sockets
+     * each time would make allowing one relay a reconnection storm across all
+     * the others.
+     */
+    @Test
+    fun `allowing a relay disturbs no existing connection`() =
+        runTest {
+            val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            val url = RelayUrl("wss://suggested.example/")
+            controller.relays.setPermissions(url, read = true, write = false)
+            runCurrent()
+            transport.connectedRelays.value = setOf(url)
+
+            controller.relays.setPermissions(url, read = true, write = true)
+            runCurrent()
+
+            assertTrue(transport.disconnected.isEmpty(), "widening a grant is not a reason to drop anything")
+        }
+
     @Test
     fun `the permission list is local, so changing it publishes nothing`() =
         runTest {

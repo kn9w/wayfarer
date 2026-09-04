@@ -833,20 +833,34 @@ class AppController(
                 return@run
             }
 
-            when (deviceAuth()?.invoke() ?: DeviceAuthOutcome.UNAVAILABLE) {
+            when (deviceAuth()?.invoke() ?: DeviceAuthOutcome.FAILED) {
                 DeviceAuthOutcome.CONFIRMED -> Unit
                 DeviceAuthOutcome.REJECTED -> {
                     messageState.value = UserMessage.Error("Not confirmed, so the key stays hidden.")
                     return@run
                 }
-                // No screen lock, or no way to ask: refusing outright would lock the
-                // user out of their own key, so it is shown and the gap is named.
-                DeviceAuthOutcome.UNAVAILABLE ->
+                // A device with no screen lock has nothing to ask with. Refusing
+                // outright would lock somebody out of their own key over a
+                // setting they may not want, so it is shown and the gap is named.
+                DeviceAuthOutcome.NO_LOCK_SET ->
                     messageState.value =
                         UserMessage.Info(
-                            "Your phone did not ask you to confirm — it has no screen lock set, or could not " +
-                                "show one. Anyone holding this phone can reach this key.",
+                            "Your phone has no screen lock, so it could not ask you to confirm. Anyone holding " +
+                                "this phone can reach this key.",
                         )
+                // A lock screen exists and would not appear. That is a failure,
+                // and a failure is not a confirmation: this path used to share a
+                // value with the one above and so revealed the key whenever
+                // asking went wrong, which is the opposite of what the check is
+                // for.
+                DeviceAuthOutcome.FAILED -> {
+                    messageState.value =
+                        UserMessage.Error(
+                            "This phone could not show its lock screen, so the key stays hidden. Try again, or " +
+                                "unlock and reopen the app.",
+                        )
+                    return@run
+                }
             }
 
             val nsec = core.accounts.revealSecretKey()
@@ -1195,7 +1209,30 @@ class AppController(
      */
     private fun onRelayPermissionsChanged() {
         recomputeRelayListPrompt()
+        dropRevokedConnections()
         reloadQuietly()
+    }
+
+    /**
+     * Closes any socket to a relay that is no longer approved.
+     *
+     * The approval gate refuses to *dial* an unapproved relay, which says
+     * nothing about one already connected. Without this, blocking a relay
+     * stopped it being asked for anything and left the websocket open — still
+     * pinging, still holding the user's IP address — until the account switched
+     * or the app went to the background. "Block" has to mean the connection
+     * ends, or the button is describing something the app does not do.
+     *
+     * Reads the transport's own view of what is connected rather than the
+     * routing plan's, because the question is which sockets exist, not which
+     * ones should.
+     */
+    private fun dropRevokedConnections() {
+        val revoked =
+            core.transport.connected.value
+                .filterNot { core.relayDirectory.isApproved(it) }
+                .toSet()
+        if (revoked.isNotEmpty()) core.transport.disconnect(revoked)
     }
 
     private fun recomputeRelayListPrompt() {
@@ -1976,13 +2013,24 @@ sealed interface RelayPurpose {
     data object Browse : RelayPurpose
 }
 
-/** What Android said when asked to confirm the device owner. */
+/**
+ * What Android said when asked to confirm the device owner.
+ *
+ * [NO_LOCK_SET] and [FAILED] used to be one value, and collapsing them meant the
+ * key was shown in both cases. Only the first deserves that: refusing somebody
+ * with no screen lock would lock them out of their own key, which is worse than
+ * the gap it closes. The second is a device that *does* have a lock screen and
+ * could not show it — an error, and an error is not permission.
+ */
 enum class DeviceAuthOutcome {
     CONFIRMED,
     REJECTED,
 
-    /** No screen lock is set, or no launcher is attached to ask with. */
-    UNAVAILABLE,
+    /** This device has no screen lock, so there was nothing to ask with. */
+    NO_LOCK_SET,
+
+    /** There is a lock screen and it could not be shown, or nothing was attached to ask with. */
+    FAILED,
 }
 
 /** The introduction's copy. Kept here so the wording is testable, not buried in a composable. */
