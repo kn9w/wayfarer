@@ -372,10 +372,14 @@ be smoke-tested on a device — sign in, approve a relay, read a feed, open a pi
 
 ## Releasing
 
-See [docs/RELEASING.md](docs/RELEASING.md). Two gates come before anything else:
-CI has to go green once — which is the first time a compiler will ever have seen
-the Android modules — and a release build has to be smoke-tested on a device,
-because R8 changes what runs.
+See [docs/RELEASING.md](docs/RELEASING.md). One gate comes before anything is
+handed to another person: a release build has to be smoke-tested on a device,
+because R8 changes what runs and CI cannot prove that the shrunk APK still works
+— only that shrinking finished.
+
+Tagging `v*` builds, signs and publishes; a tag carrying `-alpha`, `-beta` or
+`-rc` is marked a pre-release. Every build anyone installs is signed with the
+same key, so an early one updates in place rather than having to be uninstalled.
 
 ## License
 

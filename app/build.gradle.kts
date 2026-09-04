@@ -15,8 +15,12 @@ android {
         applicationId = "app.wayfarer"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
+        // versionCode must increase on every upload and is never reused —
+        // stores order builds by it. versionName is what people read, and a
+        // `-beta.N` suffix is what marks a build as one to try rather than one
+        // to rely on.
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0-beta.1"
     }
 
     buildFeatures {
