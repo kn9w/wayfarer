@@ -602,6 +602,97 @@ class AppControllerTest {
         }
 
     @Test
+    fun `switching accounts swaps the permissions with them`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val controller = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+
+            // One account with a relay allowed…
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            val first = assertNotNull(controller.account.value).pubKey
+            controller.relays.add("wss://first.example", read = true, write = false)
+            runCurrent()
+
+            // …and a second, which starts out allowed nothing.
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            assertTrue(
+                controller.relays.state.value.approved.isEmpty(),
+                "a new account does not inherit what another one allowed",
+            )
+
+            controller.switchTo(first)
+            runCurrent()
+
+            assertEquals(first, controller.account.value?.pubKey)
+            assertEquals(1, controller.relays.state.value.approved.size, "and switching back brings that list back")
+        }
+
+    @Test
+    fun `logging out erases the permissions rather than putting them away`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val controller = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            val leaving = assertNotNull(controller.account.value).pubKey
+            controller.relays.add("wss://open.example", read = true, write = false)
+            controller.media.add("image.example")
+            runCurrent()
+
+            controller.logout()
+            runCurrent()
+
+            // Not merely out of scope: gone. A grant is standing permission to
+            // open a socket, and an account that has left this phone must not be
+            // able to resume one by signing back in.
+            assertTrue(
+                settings.values.keys.none { it.contains(leaving.hex) },
+                "no record of what that account allowed is left behind",
+            )
+        }
+
+    @Test
+    fun `logging out of a second account hands the app back to the first`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val controller = AppController(wayfarer(settings), TestScope(testScheduler))
+            runCurrent()
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+            val first = assertNotNull(controller.account.value).pubKey
+
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            controller.logout()
+            runCurrent()
+
+            // Leaving one identity is not leaving the app, so there is no reason
+            // to put anybody through the front door.
+            assertEquals(first, controller.account.value?.pubKey)
+            assertNull(controller.onboarding.value)
+        }
+
+    @Test
     fun `logging out leaves a session that may talk to nothing`() =
         runTest {
             val settings = FakeKeyValueStore()

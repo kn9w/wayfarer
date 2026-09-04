@@ -144,5 +144,7 @@ class PersistedRelayDirectoryStore(
         store.putString(key, codec.encode(snapshot))
     }
 
+    override suspend fun delete(owner: PubKey) = store.remove("$prefix${owner.hex}")
+
     private fun keyFor(owner: PubKey?): String? = owner?.let { "$prefix${it.hex}" }
 }

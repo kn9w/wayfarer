@@ -19,6 +19,7 @@ import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.Mentions
 import app.wayfarer.core.relay.RelayInfoService
 import app.wayfarer.core.repo.Account
+import app.wayfarer.core.repo.AccountSummary
 import app.wayfarer.core.repo.FollowSource
 import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.core.repo.LoginResult
@@ -245,6 +246,9 @@ class AppController(
 
     val account: StateFlow<Account?> get() = core.accounts.account
 
+    /** Every account signed in on this device, for the switcher in settings. */
+    val accounts: StateFlow<List<AccountSummary>> get() = core.accounts.accounts
+
     /** The relays this build ships with. Shown before they are ever queried. */
     val suggestedRelays: List<RelayUrl> get() = core.suggestedRelays
 
@@ -290,7 +294,7 @@ class AppController(
             // Whoever this session belongs to, and what they have allowed. A
             // guest gets an empty list that is never written down, which is why
             // the question below has to be asked again on every launch.
-            core.scopeRelaysTo(restored?.pubKey)
+            core.scopePermissionsTo(restored?.pubKey)
 
             when {
                 // Nobody has been here before: the introduction, from the top.
@@ -424,9 +428,15 @@ class AppController(
         onboardingState.value = null
         // Whoever signed in while this surface was up is now in the app, so
         // whatever was waiting on the far side of it can go ahead.
-        deferredSignIn?.let { account ->
-            deferredSignIn = null
-            quietly { onSignedIn(account) }
+        val waiting = deferredSignIn
+        deferredSignIn = null
+        when (waiting) {
+            null ->
+                // Backing out of "add another account" with nobody new: the
+                // feed's subscription was closed for the duration, because
+                // nothing is contacted during onboarding, so it is reopened.
+                reloadQuietly()
+            else -> quietly { onSignedIn(waiting) }
         }
     }
 
@@ -609,7 +619,7 @@ class AppController(
             // approved during the rest of onboarding has to be written down as
             // *this* account's, or the load released at the end would replace
             // them with the empty list it was signed up with.
-            core.scopeRelaysTo(account.pubKey)
+            core.scopePermissionsTo(account.pubKey)
             onboardingState.value = OnboardingStep.Backup(nsec)
             // Neither awaited nor started here. The account exists and the key
             // is on screen, which is what the press asked for; the reading waits
@@ -667,7 +677,7 @@ class AppController(
         // Their list, before it is asked whether the list is empty. Read before
         // the scope changed, the question would have been answered by whatever
         // the *previous* session — a guest, or somebody else — had allowed.
-        core.scopeRelaysTo(account.pubKey)
+        core.scopePermissionsTo(account.pubKey)
 
         if (core.relayDirectory.grants.isEmpty()) {
             onboardingState.value = proposeDefaults(RelayPurpose.FindAccount(account.pubKey))
@@ -693,17 +703,77 @@ class AppController(
      * The order matters: the network stops first, then what is on screen, and
      * only then the stored state. Nothing here suspends before the user is off
      * the app, so the screen changes on the same frame as the press.
+     *
+     * With another account signed in, this is a departure from one identity
+     * rather than from the app: that account takes over. With none, the session
+     * is left signed out, connected to nothing, at the front door.
      */
     fun logout() {
-        // Silence the network before anything else. restartStream refuses to
-        // reopen while onboarding is up, so this is the whole of it.
+        val leaving = core.accounts.account.value?.pubKey
+        stopEverything()
+        clearSessionState()
+        goToRoot(Screen.Home)
+
+        quietly {
+            // Erased, not put away. A relay grant and a picture-server grant are
+            // standing permission to open a connection; an account that has left
+            // this phone should not be able to resume those by signing back in,
+            // least of all on somebody else's device.
+            leaving?.let { core.forgetPermissionsOf(it) }
+            core.contacts.clear()
+            core.localFollows.clear()
+
+            when (val next = core.accounts.logout()) {
+                // Somebody else is still signed in, so this is a departure from
+                // one account rather than from the app.
+                null -> {
+                    core.scopePermissionsTo(null)
+                    onboardingState.value = OnboardingStep.Start
+                }
+                else -> onSignedIn(next)
+            }
+        }
+    }
+
+    /**
+     * Makes another signed-in account the active one.
+     *
+     * Not a logout: nothing is erased, and the account being left keeps its
+     * permissions, its follows and its key. What changes is whose consent the
+     * app is operating under, which is why every connection is dropped first —
+     * the sockets that are open belong to the account that opened them.
+     */
+    fun switchTo(pubKey: PubKey) {
+        if (core.accounts.account.value?.pubKey == pubKey) return
+        stopEverything()
+        clearSessionState()
+        goToRoot(Screen.Home)
+
+        quietly {
+            core.contacts.clear()
+            core.localFollows.clear()
+            val account = core.accounts.switchTo(pubKey) ?: return@quietly
+            onSignedIn(account)
+        }
+    }
+
+    /** Adds another account without leaving the one signed in. */
+    fun addAnotherAccount() {
+        onboardingState.value = OnboardingStep.Start
+    }
+
+    /** Drops every connection this session has open. */
+    private fun stopEverything() {
         streamJob?.cancel()
         streamJob = null
         if (transportStarted) {
             transportStarted = false
             core.transport.stop()
         }
+    }
 
+    /** Empties what is on screen, so nothing of one account is shown under another. */
+    private fun clearSessionState() {
         feedState.value = FeedState()
         viewedProfileState.value = null
         revealedKeyState.value = null
@@ -711,19 +781,6 @@ class AppController(
         exhaustedAuthorsState.value = emptySet()
         pendingProfiles.value = emptySet()
         threads.clear()
-        goToRoot(Screen.Home)
-        onboardingState.value = OnboardingStep.Start
-
-        quietly {
-            core.accounts.logout()
-            core.contacts.clear()
-            // Forgotten, not deleted: both lists are keyed by the account that
-            // owns them and come back when they sign in again. What is left on
-            // screen is a session that may talk to nothing, which is what being
-            // signed out of this app means.
-            core.localFollows.clear()
-            core.scopeRelaysTo(null)
-        }
     }
 
     /**
@@ -783,7 +840,7 @@ class AppController(
         // Their own permissions, before anything is asked of anybody. This is
         // also what stops one account inheriting another's: the list is keyed by
         // the pubkey that granted it.
-        core.scopeRelaysTo(account.pubKey)
+        core.scopePermissionsTo(account.pubKey)
         ensureTransportStarted()
 
         core.relayListRepo.refresh(account.pubKey)?.let { core.relayListRepo.offerToDirectory(it, isOwnAccount = true) }
@@ -1338,6 +1395,48 @@ class AppController(
      * Avatars need the picture the moment it arrives, so they read this instead.
      */
     val profiles: StateFlow<Map<PubKey, Profile>> get() = core.profiles.profiles
+
+    // ---- what is wrong with what was typed --------------------------------
+
+    /**
+     * Why [input] is not a key, or null when it is one.
+     *
+     * Checked before anything is attempted, so the answer can be shown against
+     * the field that produced it rather than as a banner over the whole app. The
+     * parsing is the same the login itself does — this asks core the question
+     * without acting on it.
+     */
+    fun keyProblem(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return "Paste an npub or an nsec."
+        if (core.bech32.decodeSecKeyHex(trimmed) != null || core.bech32.decodePubKey(trimmed) != null) return null
+        return "That is not an npub or an nsec. A raw hex key works too."
+    }
+
+    /** Why [input] is not somewhere to start, or null when it is. */
+    fun startingPointProblem(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return "Type a relay address, an npub or an nprofile."
+        if (core.bech32.decodeProfileRef(trimmed) != null) return null
+        if (core.normalizer.normalize(trimmed) != null) return null
+        return "Not a relay address or a key. A relay looks like wss://relay.example.com."
+    }
+
+    /** Why [input] is not a relay address, or null when it is. */
+    fun relayProblem(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return "Type a relay address."
+        if (core.normalizer.normalize(trimmed) != null) return null
+        return "Not a relay address. They look like wss://relay.example.com."
+    }
+
+    /** Why [input] is not a picture server, or null when it is one. */
+    fun mediaHostProblem(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return "Type a server address."
+        if (media.hostOf(trimmed) != null) return null
+        return "Not a server address. They look like image.example.com."
+    }
 
     fun npubFor(pubKey: PubKey): String = core.bech32.encodeNpub(pubKey)
 
@@ -1925,7 +2024,21 @@ data class ExternalSignerIdentity(
     val packageName: String,
 )
 
+/**
+ * Something to tell the user, and how much of the screen it deserves.
+ *
+ * Two weights, not one. An error and a publish report used to be the same
+ * full-width card pinned under the app bar, pushing the page down and staying
+ * until dismissed — so a mistyped relay address interrupted as much as a report
+ * naming eight relays, and neither could be ignored. [transient] messages are
+ * snackbars now: they float over the content, leave on their own, and shift
+ * nothing. A publish report is not transient, because it is a record somebody
+ * reads rather than a flash.
+ */
 sealed interface UserMessage {
+    /** True when this is a line to glance at rather than a page to read. */
+    val transient: Boolean get() = true
+
     data class Error(
         val text: String,
     ) : UserMessage
@@ -1937,5 +2050,7 @@ sealed interface UserMessage {
     /** A publish result, shown per relay — the interesting part of outbox routing. */
     data class Published(
         val report: PublishReport,
-    ) : UserMessage
+    ) : UserMessage {
+        override val transient: Boolean get() = false
+    }
 }

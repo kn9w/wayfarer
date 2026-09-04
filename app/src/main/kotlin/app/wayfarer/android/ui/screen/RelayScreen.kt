@@ -82,6 +82,7 @@ fun RelayScreen(controller: AppController) {
     val infoPrompt by controller.relayInfoPrompt.collectAsStateWithLifecycle()
     var explaining by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var queryError by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(RelayFilter.All) }
     var opened by remember { mutableStateOf<RelayUrl?>(null) }
 
@@ -172,7 +173,14 @@ fun RelayScreen(controller: AppController) {
         // Outside the list on purpose. With hundreds of relays queued, a search
         // box that scrolled away with the content would be the one control the
         // user could never get back to.
-        RelaySearchBar(query = query, onQueryChange = { query = it })
+        RelaySearchBar(
+            query = query,
+            error = queryError,
+            onQueryChange = {
+                query = it
+                queryError = null
+            },
+        )
         RelayFilterChips(state = state, selected = filter, onSelect = { filter = it })
         HorizontalDivider()
 
@@ -186,8 +194,12 @@ fun RelayScreen(controller: AppController) {
                         query = query,
                         anyRelaysAtAll = all.isNotEmpty(),
                         onAdd = {
-                            controller.relays.add(query.trim(), read = true, write = false)
-                            query = ""
+                            val problem = controller.relayProblem(query)
+                            queryError = problem
+                            if (problem == null) {
+                                controller.relays.add(query.trim(), read = true, write = false)
+                                query = ""
+                            }
                         },
                     )
                 }
@@ -263,6 +275,7 @@ private enum class RelayFilter(
 @Composable
 private fun RelaySearchBar(
     query: String,
+    error: String?,
     onQueryChange: (String) -> Unit,
 ) {
     OutlinedTextField(
@@ -270,6 +283,10 @@ private fun RelaySearchBar(
         onValueChange = onQueryChange,
         label = { Text("Search relays") },
         singleLine = true,
+        // The box is also how a relay is added, so what is wrong with an address
+        // typed into it is said here rather than over the whole app.
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
         leadingIcon = { Icon(WayfarerIcons.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) {

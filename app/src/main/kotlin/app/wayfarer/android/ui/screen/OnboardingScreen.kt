@@ -1,6 +1,7 @@
 package app.wayfarer.android.ui.screen
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -16,11 +17,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.MessageBanner
+import app.wayfarer.android.ui.WayfarerSnackbarHost
+import app.wayfarer.android.ui.show
 import app.wayfarer.android.ui.WayfarerProgressBar
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Introduction
@@ -54,18 +59,30 @@ fun OnboardingSurface(
     val busy by controller.busy.collectAsStateWithLifecycle()
     val message by controller.message.collectAsStateWithLifecycle()
 
-    Column(Modifier.fillMaxSize()) {
-        if (busy) WayfarerProgressBar(Modifier.fillMaxWidth())
-        message?.let { MessageBanner(it, controller::dismissMessage) }
+    // Onboarding has no Scaffold — it deliberately owns the whole window — so it
+    // hangs its own snackbar host at the bottom rather than borrowing one.
+    val snackbars = remember { SnackbarHostState() }
+    LaunchedEffect(message) {
+        val shown = message?.let { snackbars.show(it) } ?: false
+        if (shown) controller.dismissMessage()
+    }
 
-        when (step) {
-            OnboardingStep.Start -> StartScreen(controller, busy)
-            is OnboardingStep.Learn -> IntroductionScreen(controller, step.page)
-            OnboardingStep.AccountChoice -> AccountChoiceScreen(controller, busy)
-            is OnboardingStep.Backup -> BackupScreen(step.nsec, controller::finishBackup)
-            OnboardingStep.EntryPoint -> EntryPointScreen(controller, busy)
-            is OnboardingStep.ApproveRelays -> ApproveRelaysScreen(controller, step, busy)
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            if (busy) WayfarerProgressBar(Modifier.fillMaxWidth())
+            message?.takeIf { !it.transient }?.let { MessageBanner(it, controller::dismissMessage) }
+
+            when (step) {
+                OnboardingStep.Start -> StartScreen(controller, busy)
+                is OnboardingStep.Learn -> IntroductionScreen(controller, step.page)
+                OnboardingStep.AccountChoice -> AccountChoiceScreen(controller, busy)
+                is OnboardingStep.Backup -> BackupScreen(step.nsec, controller::finishBackup)
+                OnboardingStep.EntryPoint -> EntryPointScreen(controller, busy)
+                is OnboardingStep.ApproveRelays -> ApproveRelaysScreen(controller, step, busy)
+            }
         }
+
+        WayfarerSnackbarHost(snackbars)
     }
 }
 
@@ -86,6 +103,11 @@ private fun StartScreen(
     busy: Boolean,
 ) {
     var key by remember { mutableStateOf("") }
+    // Held here rather than sent to the app's message channel: what is wrong is
+    // wrong with this field, so it is said under this field. Cleared as soon as
+    // the text changes, because a complaint about what somebody has already
+    // stopped typing is noise.
+    var keyError by remember { mutableStateOf<String?>(null) }
 
     Page {
         Text("Wayfarer", style = MaterialTheme.typography.headlineMedium)
@@ -145,13 +167,22 @@ private fun StartScreen(
 
         OutlinedTextField(
             value = key,
-            onValueChange = { key = it },
+            onValueChange = {
+                key = it
+                keyError = null
+            },
             label = { Text("npub or nsec") },
             singleLine = true,
+            isError = keyError != null,
+            supportingText = keyError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedButton(
-            onClick = { controller.login(key) },
+            onClick = {
+                val problem = controller.keyProblem(key)
+                keyError = problem
+                if (problem == null) controller.login(key)
+            },
             enabled = !busy && key.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -308,6 +339,7 @@ private fun EntryPointScreen(
     busy: Boolean,
 ) {
     var input by remember { mutableStateOf("") }
+    var inputError by remember { mutableStateOf<String?>(null) }
 
     Page {
         Text("Where should we start?", style = MaterialTheme.typography.headlineSmall)
@@ -319,15 +351,24 @@ private fun EntryPointScreen(
 
         OutlinedTextField(
             value = input,
-            onValueChange = { input = it },
+            onValueChange = {
+                input = it
+                inputError = null
+            },
             label = { Text("Relay address, npub or nprofile") },
             placeholder = { Text("wss://relay.example.com") },
             singleLine = true,
+            isError = inputError != null,
+            supportingText = inputError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
-                onClick = { controller.submitEntryPoint(input) },
+                onClick = {
+                    val problem = controller.startingPointProblem(input)
+                    inputError = problem
+                    if (problem == null) controller.submitEntryPoint(input)
+                },
                 enabled = !busy && input.isNotBlank(),
                 modifier = Modifier.weight(1f),
             ) { Text("Continue") }
@@ -377,6 +418,7 @@ private fun ApproveRelaysScreen(
     busy: Boolean,
 ) {
     var ownRelay by remember { mutableStateOf("") }
+    var ownRelayError by remember { mutableStateOf<String?>(null) }
 
     Page {
         Text(
@@ -411,13 +453,22 @@ private fun ApproveRelaysScreen(
         Text("Or name a relay you trust instead", style = MaterialTheme.typography.titleSmall)
         OutlinedTextField(
             value = ownRelay,
-            onValueChange = { ownRelay = it },
+            onValueChange = {
+                ownRelay = it
+                ownRelayError = null
+            },
             label = { Text("wss://relay.example.com") },
             singleLine = true,
+            isError = ownRelayError != null,
+            supportingText = ownRelayError?.let { { Text(it) } },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedButton(
-            onClick = { controller.useRelayInstead(ownRelay) },
+            onClick = {
+                val problem = controller.relayProblem(ownRelay)
+                ownRelayError = problem
+                if (problem == null) controller.useRelayInstead(ownRelay)
+            },
             enabled = !busy && ownRelay.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Use this one instead") }

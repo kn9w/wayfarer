@@ -51,23 +51,52 @@ class AndroidSecretStore(
 ) : SecretStore {
     private val prefs = context.applicationContext.getSharedPreferences("wayfarer.secrets", Context.MODE_PRIVATE)
 
-    override suspend fun readSecKeyHex(): String? =
+    override suspend fun readSecKeyHex(id: String): String? =
         withContext(Dispatchers.IO) {
-            val stored = prefs.getString(KEY_CIPHERTEXT, null) ?: return@withContext null
+            val stored = prefs.getString(entryFor(id), null) ?: return@withContext null
             runCatching { decrypt(stored) }.getOrNull()
         }
 
-    override suspend fun writeSecKeyHex(secKeyHex: String) {
+    override suspend fun writeSecKeyHex(
+        id: String,
+        secKeyHex: String,
+    ) {
         withContext(Dispatchers.IO) {
-            prefs.edit().putString(KEY_CIPHERTEXT, encrypt(secKeyHex)).apply()
+            prefs.edit().putString(entryFor(id), encrypt(secKeyHex)).apply()
         }
     }
 
-    override suspend fun clear() {
+    override suspend fun clear(id: String) {
         withContext(Dispatchers.IO) {
-            prefs.edit().remove(KEY_CIPHERTEXT).apply()
-            runCatching { keyStore().deleteEntry(KEY_ALIAS) }
+            prefs.edit().remove(entryFor(id)).apply()
+            deleteKeystoreKeyIfUnused()
         }
+    }
+
+    override suspend fun readLegacySecKeyHex(): String? =
+        withContext(Dispatchers.IO) {
+            val stored = prefs.getString(LEGACY_ENTRY, null) ?: return@withContext null
+            runCatching { decrypt(stored) }.getOrNull()
+        }
+
+    override suspend fun clearLegacy() {
+        withContext(Dispatchers.IO) {
+            prefs.edit().remove(LEGACY_ENTRY).apply()
+        }
+    }
+
+    private fun entryFor(id: String) = "$ENTRY_PREFIX$id"
+
+    /**
+     * Drops the keystore key only when nothing is left encrypted under it.
+     *
+     * One AES key protects every account's ciphertext, so deleting it on any one
+     * logout would destroy the keys of the accounts still signed in. This is
+     * what makes logging out of one account safe for the others.
+     */
+    private fun deleteKeystoreKeyIfUnused() {
+        val anyLeft = prefs.all.keys.any { it.startsWith(ENTRY_PREFIX) || it == LEGACY_ENTRY }
+        if (!anyLeft) runCatching { keyStore().deleteEntry(KEY_ALIAS) }
     }
 
     private fun encrypt(plaintext: String): String {
@@ -109,7 +138,11 @@ class AndroidSecretStore(
         const val PROVIDER = "AndroidKeyStore"
         const val KEY_ALIAS = "wayfarer.account.seckey"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val KEY_CIPHERTEXT = "account.seckey"
+        /** One entry per account, named by its pubkey hex. */
+        const val ENTRY_PREFIX = "account.seckey."
+
+        /** The single slot builds before multi-account wrote. Migrated, then removed. */
+        const val LEGACY_ENTRY = "account.seckey"
         const val IV_BYTES = 12
         const val TAG_BITS = 128
     }

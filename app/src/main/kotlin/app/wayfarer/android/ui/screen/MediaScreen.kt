@@ -70,6 +70,7 @@ fun MediaScreen(controller: AppController) {
     val state by controller.media.state.collectAsStateWithLifecycle()
     var explaining by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var queryError by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(MediaFilter.All) }
     var opened by remember { mutableStateOf<MediaHost?>(null) }
 
@@ -132,7 +133,14 @@ fun MediaScreen(controller: AppController) {
                 TextButton(onClick = { explaining = true }) { Text("What is a media server?") }
             },
         )
-        MediaSearchBar(query = query, onQueryChange = { query = it })
+        MediaSearchBar(
+            query = query,
+            error = queryError,
+            onQueryChange = {
+                query = it
+                queryError = null
+            },
+        )
         MediaFilterChips(state = state, selected = filter, onSelect = { filter = it })
         HorizontalDivider()
 
@@ -146,8 +154,12 @@ fun MediaScreen(controller: AppController) {
                         query = query,
                         anyHostsAtAll = all.isNotEmpty(),
                         onAdd = {
-                            controller.media.add(query.trim())
-                            query = ""
+                            val problem = controller.mediaHostProblem(query)
+                            queryError = problem
+                            if (problem == null) {
+                                controller.media.add(query.trim())
+                                query = ""
+                            }
                         },
                     )
                 }
@@ -206,6 +218,7 @@ private enum class MediaFilter(
 @Composable
 private fun MediaSearchBar(
     query: String,
+    error: String?,
     onQueryChange: (String) -> Unit,
 ) {
     OutlinedTextField(
@@ -213,6 +226,9 @@ private fun MediaSearchBar(
         onValueChange = onQueryChange,
         label = { Text("Search servers") },
         singleLine = true,
+        // Also the way a server is added by hand, so its complaints belong here.
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
         leadingIcon = { Icon(WayfarerIcons.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) {

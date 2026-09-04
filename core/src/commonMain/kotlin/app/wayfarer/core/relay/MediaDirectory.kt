@@ -3,6 +3,7 @@ package app.wayfarer.core.relay
 import app.wayfarer.core.model.MediaDirectorySnapshot
 import app.wayfarer.core.model.MediaGrant
 import app.wayfarer.core.model.MediaHost
+import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.MediaReason
 import app.wayfarer.core.model.MediaSource
 import app.wayfarer.core.model.PendingMediaHost
@@ -41,6 +42,9 @@ class MediaDirectory(
     private val writeLock = Mutex()
 
     private val state = MutableStateFlow(initial)
+
+    /** Whose list this currently is, or null for a session with nobody signed in. */
+    private var owner: PubKey? = null
 
     val snapshot: StateFlow<MediaDirectorySnapshot> = state.asStateFlow()
 
@@ -158,7 +162,30 @@ class MediaDirectory(
                 state.value = next
                 next
             }
-        persistence?.save(updated)
+        persistence?.save(owner, updated)
+    }
+
+    /**
+     * Points the list at [account]'s own, or at a fresh one for a session with
+     * nobody signed in.
+     *
+     * The same rule as the relay permissions, for the same reason: allowing a
+     * picture server is consent to hand that server your IP address and the fact
+     * that you are looking at a particular profile, given by a person rather
+     * than by a handset. A guest's list lives for the session and is never
+     * written down.
+     */
+    suspend fun scopeTo(account: PubKey?) {
+        writeLock.withLock {
+            owner = account
+            state.value = persistence?.load(account) ?: MediaDirectorySnapshot()
+        }
+    }
+
+    /** Erases [account]'s list from this device. See `RelayDirectory.forget`. */
+    suspend fun forget(account: PubKey) {
+        persistence?.delete(account)
+        if (owner == account) scopeTo(null)
     }
 }
 
@@ -169,7 +196,13 @@ fun interface MediaAccessPolicy {
 
 /** Persistence for the media directory. Implemented per platform. */
 interface MediaDirectoryStore {
-    suspend fun load(): MediaDirectorySnapshot
+    suspend fun load(owner: PubKey?): MediaDirectorySnapshot
 
-    suspend fun save(snapshot: MediaDirectorySnapshot)
+    suspend fun save(
+        owner: PubKey?,
+        snapshot: MediaDirectorySnapshot,
+    )
+
+    /** Erases [owner]'s record. See [MediaDirectory.forget]. */
+    suspend fun delete(owner: PubKey)
 }

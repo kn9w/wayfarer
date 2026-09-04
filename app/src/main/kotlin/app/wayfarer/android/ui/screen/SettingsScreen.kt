@@ -1,6 +1,8 @@
 package app.wayfarer.android.ui.screen
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,12 +10,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -25,17 +30,29 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.platform.SecureScreen
 import app.wayfarer.android.ui.ScreenHeader
+import app.wayfarer.android.ui.Avatar
+import app.wayfarer.android.ui.icons.WayfarerIcons
 import app.wayfarer.core.repo.ACTIVITY_WINDOW_CHOICES
 import app.wayfarer.core.repo.HeaderStyle
 import app.wayfarer.android.ui.theme.localButtonColors
+import app.wayfarer.android.ui.theme.localOutlinedButtonColors
+import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.viewmodel.AppController
 import app.wayfarer.android.viewmodel.Screen
+import app.wayfarer.android.viewmodel.shortenNpub
 import app.wayfarer.core.repo.Credential
+import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.repo.Account
+import app.wayfarer.core.repo.AccountSummary
+import app.wayfarer.core.repo.CredentialKind
 
 /**
  * Account and key settings.
@@ -110,6 +127,7 @@ fun SettingsScreen(controller: AppController) {
 
     val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
     val headerStyle by controller.headerStyle.collectAsStateWithLifecycle()
+    val accounts by controller.accounts.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = { Text("Settings", style = MaterialTheme.typography.titleLarge) })
@@ -134,24 +152,26 @@ fun SettingsScreen(controller: AppController) {
                 return@Column
             }
 
-            Text("Account", style = MaterialTheme.typography.titleMedium)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(current.npub, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        when (current.credential) {
-                            is Credential.LocalKey -> "The key is held on this phone, encrypted by Android's keystore."
-                            is Credential.ExternalSigner ->
-                                "Signing happens in your signer app. Wayfarer has never seen this key, so it " +
-                                    "cannot show it to you — back it up there."
-                            Credential.WatchOnly ->
-                                "Added with an npub, so this is a read-only view of somebody's account. There is " +
-                                    "no key here and nothing can be posted."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
+            AccountsSection(
+                controller = controller,
+                current = current,
+                others = accounts,
+                onLogOut = { confirmingLogout = true },
+            )
+
+            Text(
+                when (current.credential) {
+                    is Credential.LocalKey -> "The key is held on this phone, encrypted by Android's keystore."
+                    is Credential.ExternalSigner ->
+                        "Signing happens in your signer app. Wayfarer has never seen this key, so it " +
+                            "cannot show it to you — back it up there."
+                    Credential.WatchOnly ->
+                        "Added with an npub, so this is a read-only view of somebody's account. There is " +
+                            "no key here and nothing can be posted."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             if (current.hasLocalKey) {
                 HorizontalDivider()
@@ -250,12 +270,150 @@ fun SettingsScreen(controller: AppController) {
             }
 
             HorizontalDivider()
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                // Never disabled. This is the control somebody reaches for when
-                // they want the app to stop, and gating it on the progress bar
-                // meant it went dead exactly while something was happening.
-                OutlinedButton(onClick = { confirmingLogout = true }) { Text("Log out") }
+        }
+    }
+}
+
+/**
+ * Who is signed in, and the others who also are.
+ *
+ * More than one account can be signed in at once, so this is a switcher rather
+ * than a status line: the active one at the top with what it can do and the way
+ * out, everybody else as a row that takes one tap. Nostr identities are cheap
+ * and people keep several on purpose, and an app that holds one makes using the
+ * second mean destroying the first.
+ */
+@Composable
+private fun AccountsSection(
+    controller: AppController,
+    current: Account,
+    others: List<AccountSummary>,
+    onLogOut: () -> Unit,
+) {
+    Text("Accounts", style = MaterialTheme.typography.titleMedium)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            AccountRow(
+                controller = controller,
+                pubKey = current.pubKey,
+                npub = current.npub,
+                kind = current.credential.kind(),
+                active = true,
+                onClick = null,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Trail: signing out changes this phone. It publishes nothing,
+                // and what it erases is what this phone was allowed to do.
+                OutlinedButton(onClick = onLogOut, colors = localOutlinedButtonColors()) { Text("Log out") }
+                TextButton(onClick = controller::addAnotherAccount) { Text("Add another account") }
+            }
+
+            val rest = others.filter { it.pubKey != current.pubKey }
+            if (rest.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    "Also signed in",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                for (other in rest) {
+                    AccountRow(
+                        controller = controller,
+                        pubKey = other.pubKey,
+                        npub = other.npub,
+                        kind = other.kind,
+                        active = false,
+                        onClick = { controller.switchTo(other.pubKey) },
+                    )
+                }
             }
         }
     }
 }
+
+/**
+ * One identity: its mark, what to call it, its key, and how it signs.
+ *
+ * The whole row taps when it is somebody to switch to, and does nothing when it
+ * is already the one in use — a row that looks pressable and is not is worse
+ * than one that plainly is not.
+ */
+@Composable
+private fun AccountRow(
+    controller: AppController,
+    pubKey: PubKey,
+    npub: String,
+    kind: CredentialKind,
+    active: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Avatar(pubKey = pubKey, controller = controller, size = 40.dp)
+
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                controller.displayName(pubKey),
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                shortenNpub(npub),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Text(
+            kind.describe(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (active) {
+            Icon(
+                WayfarerIcons.Check,
+                contentDescription = "Signed in as this account",
+                tint = MaterialTheme.colorScheme.publicAccent,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/** What an account can do, in two words. */
+private fun CredentialKind.describe(): String =
+    when (this) {
+        CredentialKind.LocalKey -> "key here"
+        CredentialKind.ExternalSigner -> "signer app"
+        CredentialKind.WatchOnly -> "read only"
+    }
+
+private fun Credential.kind(): CredentialKind =
+    when (this) {
+        is Credential.LocalKey -> CredentialKind.LocalKey
+        is Credential.ExternalSigner -> CredentialKind.ExternalSigner
+        Credential.WatchOnly -> CredentialKind.WatchOnly
+    }

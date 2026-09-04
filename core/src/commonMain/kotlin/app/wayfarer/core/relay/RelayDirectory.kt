@@ -221,6 +221,20 @@ class RelayDirectory(
         }
     }
 
+    /**
+     * Erases [account]'s permissions from this device.
+     *
+     * What logging out does, as distinct from switching accounts. A grant is
+     * standing permission to open a socket to somebody's server; leaving one
+     * behind for an account that has left means the next person to sign in with
+     * that key resumes talking to relays without being asked, on a phone that
+     * may not be theirs any more.
+     */
+    suspend fun forget(account: PubKey) {
+        persistence?.delete(account)
+        if (owner == account) scopeTo(null)
+    }
+
     private suspend fun mutate(block: (RelayDirectorySnapshot) -> RelayDirectorySnapshot) {
         val updated =
             writeLock.withLock {
@@ -253,4 +267,7 @@ interface RelayDirectoryStore {
         owner: PubKey?,
         snapshot: RelayDirectorySnapshot,
     )
+
+    /** Erases [owner]'s record. Logging out is not a pause, it is a departure. */
+    suspend fun delete(owner: PubKey)
 }

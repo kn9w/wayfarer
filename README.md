@@ -62,10 +62,9 @@ passes through it, and rejected relays are recorded as *pending* with the reason
 ("write relay of npub1abc…", "your read relay"), so the approval queue reflects your own social
 graph rather than a list the app invented.
 
-**This list belongs to whoever is signed in.** It is keyed by the account that granted it, exactly as
-the follow list kept on this phone is: signing in as somebody else starts with nothing allowed,
-logging out puts the list away rather than deleting it, and signing back in brings it back. A
-session with nobody signed in gets one that lives for the session and is never written down —
+**This list belongs to whoever is signed in.** It is keyed by the account that granted it: signing in
+as somebody else starts with nothing allowed, switching between signed-in accounts swaps one list
+for the other, and logging out erases it — see *Accounts*. A session with nobody signed in gets one that lives for the session and is never written down —
 reading without an account is supported, so the permissions have to work, but a consent record for
 nobody is not a thing to keep, and the next launch would otherwise inherit relays this session never
 approved. There is deliberately no migration from the device-wide list earlier builds kept: that
@@ -83,15 +82,36 @@ on every launch of a guest session, and on an account's first sign-in. A returni
 stored list goes straight into the app.
 
 Nothing is contacted while onboarding is on screen — not the live subscription, and not the
-one-shot loads either. That distinction was a real bug rather than a nicety: relay grants are
-persisted and survive both logging out and the account itself, so the *second* time somebody reaches
-"Where should we start?", the app already had relays it was allowed to talk to and the load behind a
-freshly created account went and used them, under a screen saying nothing had been contacted yet.
-A sign-in that happens during onboarding now waits for onboarding to end, and is then run in full.
+one-shot loads either. That distinction was a real bug rather than a nicety: back when grants were
+one device-wide record, the *second* time somebody reached "Where should we start?" the app already
+had relays it was allowed to talk to, and the load behind a freshly created account went and used
+them, under a screen saying nothing had been contacted yet. A sign-in that happens during onboarding
+now waits for onboarding to end, and is then run in full.
 
 Approving a relay reloads whatever is on screen against the new permission. It is the one thing
 standing between a new user and the posts they are waiting for, so it is not left to them to
 discover that a Refresh button now does something different.
+
+## Accounts
+
+Several can be signed in at once, and one is active. Nostr identities are cheap and people keep
+more than one on purpose — a name, a pseudonym, a project — so an app that holds a single account
+makes using the second mean destroying the first, which for an account whose key lives here means
+erasing the only copy of that key. `AccountManager` keeps a roster of who is signed in and
+materialises a credential only for the active one, so the keys of accounts nobody is currently using
+are not sitting decrypted in memory. Each key is stored under its own owner's id; the single slot
+older builds wrote is migrated across, because a key is the one thing a storage change may never
+silently drop.
+
+Switching is not signing out: nothing is erased, and the account being left keeps its key, its
+permissions and its follows. Every connection is dropped first, because the sockets that are open
+belong to the account that opened them.
+
+**Logging out is a departure.** The key is erased, and so are both permission lists — a relay grant
+and a picture-server grant are standing permission to open a connection, and leaving them behind
+would mean the next person to sign in with that key resumes talking to those servers without being
+asked, on a phone that may no longer be theirs. Another signed-in account takes over if there is
+one; otherwise the session is left connected to nothing, at the front door.
 
 ## The two relay lists
 
@@ -133,8 +153,10 @@ reading this post, now. It is a different party from the relay the post came fro
 chosen by whoever wrote the post rather than by you. An app that gates relay sockets and then loads
 every avatar it is pointed at has gated the smaller half.
 
-So media hosts get their own deny-by-default list with the relay list's shape: `MediaDirectory` is
-the single authority, and `GatedImageRequests` enforces it a second time as an OkHttp interceptor —
+So media hosts get their own deny-by-default list with the relay list's shape — including whose it
+is: like the relay permissions, it belongs to the account that granted it, is never written down for
+a guest, and is erased when that account logs out. `MediaDirectory` is the single authority, and
+`GatedImageRequests` enforces it a second time as an OkHttp interceptor —
 registered as both an application and a network interceptor, so neither the disk cache nor a
 redirect can route around it. Nothing is suggested at first run, because with no approved host the
 app still works: it draws a mark from the author's key instead of a photograph.
@@ -158,6 +180,20 @@ whose host is undecided is still only named, with the badge that leads to that d
 
 Video is queued and decided about like anything else and then named rather than played: Wayfarer
 has no player, and an honest line beats a frame that never starts.
+
+## When something goes wrong
+
+Errors are snackbars, not a banner. Every message used to be the same full-width card pinned under
+the app bar: it pushed the page down, stayed until dismissed, and gave a mistyped relay address the
+same weight as a publish report naming eight relays. Transient messages now float over the content,
+leave on their own, and move nothing; an error is tinted and stays a little longer, because it is
+the one worth reading twice. A publish report is not transient — it is a record to read, per relay —
+so it keeps the card.
+
+And where the fault is with something typed, it is said next to the field that produced it rather
+than at the top of the screen: the key on the sign-in screen, the starting point, a relay or picture
+server added by hand. The controller answers "what is wrong with this?" without acting on it, so the
+check happens before anything is attempted and the message clears the moment the text changes.
 
 ## Two colours
 

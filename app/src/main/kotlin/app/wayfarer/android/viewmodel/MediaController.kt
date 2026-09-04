@@ -201,6 +201,15 @@ class MediaController(
     /** Every picture and video a post's text points at, in the order it appears. */
     fun mediaIn(content: String): List<PostMedia> = MediaUrls.mediaIn(content)
 
+    /**
+     * The host [raw] names, or null when it names none.
+     *
+     * The same parse [add] does, without doing it — so a screen can say what is
+     * wrong with what was typed, next to where it was typed, before anything is
+     * queued.
+     */
+    fun hostOf(raw: String): MediaHost? = MediaUrls.hostOf(raw) ?: MediaHost.parseOrNull(raw.trim())
+
     fun allow(host: MediaHost) =
         scope.launch {
             core.mediaDirectory.approve(host, load = true)
@@ -228,7 +237,7 @@ class MediaController(
     /** Queues a host the user typed in. Never approves it — that is a second tap. */
     fun add(raw: String) =
         scope.launch {
-            val host = MediaUrls.hostOf(raw) ?: MediaHost.parseOrNull(raw)
+            val host = hostOf(raw)
             if (host == null) {
                 report(UserMessage.Error("That is not a server address."))
             } else {

@@ -15,6 +15,11 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,6 +79,63 @@ fun WayfarerProgressBar(modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.publicAccent,
         trackColor = MaterialTheme.colorScheme.localAccent.copy(alpha = 0.35f),
     )
+}
+
+/**
+ * A message that knows whether it is bad news.
+ *
+ * Material's own [SnackbarVisuals] carries a message and an action and nothing
+ * about severity, so the host below has no way to tint an error differently from
+ * a confirmation. This adds the one bit that was missing.
+ */
+private class WayfarerSnackbarVisuals(
+    override val message: String,
+    val error: Boolean,
+) : SnackbarVisuals {
+    override val actionLabel: String? = null
+    override val withDismissAction: Boolean = true
+    override val duration: SnackbarDuration = if (error) SnackbarDuration.Long else SnackbarDuration.Short
+}
+
+/**
+ * The app's snackbars: quiet, rounded, and gone on their own.
+ *
+ * Errors used to be a full-width card pinned under the app bar that pushed the
+ * page down and waited to be dismissed, so a mistyped address interrupted as
+ * much as anything else could. These float over the content instead, leave by
+ * themselves, and move nothing — an error is tinted, and stays a little longer
+ * because it is the one worth reading twice.
+ */
+@Composable
+fun WayfarerSnackbarHost(state: SnackbarHostState) {
+    SnackbarHost(state) { data ->
+        val error = (data.visuals as? WayfarerSnackbarVisuals)?.error == true
+        Snackbar(
+            snackbarData = data,
+            shape = RoundedCornerShape(14.dp),
+            containerColor =
+                if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.inverseSurface,
+            contentColor =
+                if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
+            dismissActionContentColor =
+                if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
+        )
+    }
+}
+
+/**
+ * Shows [message] as a snackbar and waits for it to go, or returns at once when
+ * it is not the kind of message that belongs in one.
+ */
+suspend fun SnackbarHostState.show(message: UserMessage): Boolean {
+    val visuals =
+        when (message) {
+            is UserMessage.Error -> WayfarerSnackbarVisuals(message.text, error = true)
+            is UserMessage.Info -> WayfarerSnackbarVisuals(message.text, error = false)
+            is UserMessage.Published -> return false
+        }
+    showSnackbar(visuals)
+    return true
 }
 
 /**

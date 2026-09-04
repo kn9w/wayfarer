@@ -125,17 +125,34 @@ class Wayfarer private constructor(
     val suggestedRelays: List<RelayUrl>,
 ) {
     /**
-     * Points the relay permission list at whoever is signed in.
+     * Points both permission lists at whoever is signed in.
      *
-     * Called on sign-in, on restore and on sign-out — the last with null, which
-     * leaves the session with no permissions at all until it is given some.
+     * Called on sign-in, on a switch, on restore and on sign-out — the last with
+     * null, which leaves the session with no permissions at all until it is
+     * given some.
      * The bootstrap suggestions are re-seeded every time, because they are what
      * a list with nothing in it has to offer, and [RelayDirectory.note] skips
      * anything this account has already allowed or blocked.
      */
-    suspend fun scopeRelaysTo(account: PubKey?) {
+    suspend fun scopePermissionsTo(account: PubKey?) {
         relayDirectory.scopeTo(account)
         relayDirectory.suggest(suggestedRelays)
+        // Nothing is suggested for pictures, deliberately: that queue fills
+        // itself from the profiles the reader actually opens. See MediaDirectory.
+        mediaDirectory.scopeTo(account)
+    }
+
+    /**
+     * Erases everything [account] consented to on this device.
+     *
+     * Logging out, as opposed to switching away. Both lists are standing
+     * permission to open a connection, so leaving them behind would mean the
+     * next person to sign in with that key resumes talking to relays and picture
+     * servers without being asked — on a phone that may no longer be theirs.
+     */
+    suspend fun forgetPermissionsOf(account: PubKey) {
+        relayDirectory.forget(account)
+        mediaDirectory.forget(account)
     }
 
     companion object {
@@ -181,7 +198,6 @@ class Wayfarer private constructor(
             val media =
                 MediaDirectory(
                     clock = backend.clock,
-                    initial = mediaStore.load(),
                     persistence = mediaStore,
                 )
             val suggested = bootstrapSuggestions.mapNotNull(backend.normalizer::normalize)

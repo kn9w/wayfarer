@@ -29,11 +29,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -173,6 +175,14 @@ fun WayfarerApp(
 
     var composing by remember { mutableStateOf(false) }
 
+    // Transient messages float; the publish report, which is a page of relays
+    // and their answers, stays as a card.
+    val snackbars = remember { SnackbarHostState() }
+    LaunchedEffect(message) {
+        val shown = message?.let { snackbars.show(it) } ?: false
+        if (shown) controller.dismissMessage()
+    }
+
     onboarding?.let { step ->
         // Onboarding is a sequence rather than a set of destinations, so it gets
         // its own back rule. The key backup screen swallows the press entirely:
@@ -204,6 +214,7 @@ fun WayfarerApp(
     }
 
     Scaffold(
+        snackbarHost = { WayfarerSnackbarHost(snackbars) },
         topBar = {
             AppHeader(
                 connected = connected.size,
@@ -263,7 +274,9 @@ fun WayfarerApp(
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (busy) WayfarerProgressBar(Modifier.fillMaxWidth())
 
-            message?.let {
+            // Only what is not transient — everything else is in the snackbar
+            // above, where it costs the page no room.
+            message?.takeIf { !it.transient }?.let {
                 MessageBanner(it, onDismiss = controller::dismissMessage)
             }
 

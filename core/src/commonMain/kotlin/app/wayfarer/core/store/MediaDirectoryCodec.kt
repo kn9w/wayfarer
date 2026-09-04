@@ -3,6 +3,7 @@ package app.wayfarer.core.store
 import app.wayfarer.core.model.MediaDirectorySnapshot
 import app.wayfarer.core.model.MediaGrant
 import app.wayfarer.core.model.MediaHost
+import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.MediaReason
 import app.wayfarer.core.model.MediaSource
 import app.wayfarer.core.model.PendingMediaHost
@@ -110,12 +111,30 @@ class MediaDirectoryCodec {
 }
 
 /** [MediaDirectoryStore] on top of a [KeyValueStore] and [MediaDirectoryCodec]. */
+/**
+ * One record per account, and none at all for a guest — the same shape as
+ * [app.wayfarer.core.store.PersistedRelayDirectoryStore], because the two lists
+ * answer the same kind of question about the same kind of consent.
+ */
 class PersistedMediaDirectoryStore(
     private val store: KeyValueStore,
     private val codec: MediaDirectoryCodec,
-    private val key: String = "media.directory.v1",
+    private val prefix: String = "media.directory.v2.",
 ) : MediaDirectoryStore {
-    override suspend fun load(): MediaDirectorySnapshot = codec.decode(store.getString(key))
+    override suspend fun load(owner: PubKey?): MediaDirectorySnapshot {
+        val key = keyFor(owner) ?: return MediaDirectorySnapshot()
+        return codec.decode(store.getString(key))
+    }
 
-    override suspend fun save(snapshot: MediaDirectorySnapshot) = store.putString(key, codec.encode(snapshot))
+    override suspend fun save(
+        owner: PubKey?,
+        snapshot: MediaDirectorySnapshot,
+    ) {
+        val key = keyFor(owner) ?: return
+        store.putString(key, codec.encode(snapshot))
+    }
+
+    override suspend fun delete(owner: PubKey) = store.remove("$prefix${owner.hex}")
+
+    private fun keyFor(owner: PubKey?): String? = owner?.let { "$prefix${it.hex}" }
 }

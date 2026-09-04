@@ -346,16 +346,29 @@ class FakeKeyValueStore : app.wayfarer.core.store.KeyValueStore {
 
 /** In-memory secret storage. */
 class FakeSecretStore : app.wayfarer.core.store.SecretStore {
-    var secKeyHex: String? = null
+    /** One secret per account, keyed by pubkey hex, as the real store is. */
+    val keys = mutableMapOf<String, String>()
 
-    override suspend fun readSecKeyHex(): String? = secKeyHex
+    /** The single unkeyed slot older builds wrote, for the migration's test. */
+    var legacySecKeyHex: String? = null
 
-    override suspend fun writeSecKeyHex(secKeyHex: String) {
-        this.secKeyHex = secKeyHex
+    override suspend fun readSecKeyHex(id: String): String? = keys[id]
+
+    override suspend fun writeSecKeyHex(
+        id: String,
+        secKeyHex: String,
+    ) {
+        keys[id] = secKeyHex
     }
 
-    override suspend fun clear() {
-        secKeyHex = null
+    override suspend fun clear(id: String) {
+        keys.remove(id)
+    }
+
+    override suspend fun readLegacySecKeyHex(): String? = legacySecKeyHex
+
+    override suspend fun clearLegacy() {
+        legacySecKeyHex = null
     }
 }
 
