@@ -205,6 +205,31 @@ class ImageLoader(
         }
     }
 
+    /**
+     * Throws away every picture held, in memory and on disk.
+     *
+     * Called when an account logs out. The pictures a session drew are the
+     * faces, banners and photographs of the people that account was reading —
+     * so leaving them cached would leave a legible trace of who somebody read on
+     * a phone they have just signed out of, and would let the next session be
+     * shown a picture from a server it never allowed, since a cache hit is
+     * answered before the gate is consulted.
+     *
+     * Both layers, because they fail differently: the memory cache is what the
+     * next composition would hit, and the disk cache is what survives the
+     * process.
+     */
+    suspend fun clear() {
+        withContext(Dispatchers.IO) {
+            cache.evictAll()
+            // The disk cache belongs to the client, and evicting it is IO that
+            // can fail on a device with a wedged filesystem. A cache that would
+            // not clear is not worth taking the app down over — nothing is
+            // served from it that the gate would not also allow.
+            runCatching { client.cache?.evictAll() }
+        }
+    }
+
     private fun fetch(
         url: String,
         maxPixels: Int,

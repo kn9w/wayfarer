@@ -109,4 +109,43 @@ class LocalFollowStoreTest {
 
             assertEquals(writes, settings.writes, "a follow already held is not a change")
         }
+    @Test
+    fun `logging out erases the list rather than parking it`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val store = LocalFollowStore(settings)
+            store.load(me)
+            store.add(alice)
+
+            store.forget(me)
+
+            assertTrue(store.follows.value.isEmpty())
+            // On disk as well as on screen. This list is the most private thing
+            // the app holds — people read without saying so anywhere — so an
+            // account that has left the phone must not leave one behind, where
+            // nobody could ever discover it.
+            assertTrue(settings.values.values.none { it.contains(alice.hex) })
+
+            val reopened = LocalFollowStore(settings)
+            reopened.load(me)
+            assertTrue(reopened.follows.value.isEmpty(), "and signing back in does not resurrect it")
+        }
+
+    @Test
+    fun `switching away keeps the list for the account that owns it`() =
+        runTest {
+            val settings = FakeKeyValueStore()
+            val store = LocalFollowStore(settings)
+            store.load(me)
+            store.add(alice)
+
+            // A switch, not a departure: somebody else's list is loaded and this
+            // one stays where it is.
+            store.load(somebodyElse)
+            assertTrue(store.follows.value.isEmpty())
+
+            store.load(me)
+            assertEquals(setOf(alice), store.follows.value)
+        }
+
 }

@@ -70,6 +70,7 @@ fun SettingsScreen(controller: AppController) {
     SecureScreen()
 
     val account by controller.account.collectAsStateWithLifecycle()
+    val accounts by controller.accounts.collectAsStateWithLifecycle()
     val revealed by controller.revealedSecretKey.collectAsStateWithLifecycle()
     val busy by controller.busy.collectAsStateWithLifecycle()
 
@@ -97,18 +98,59 @@ fun SettingsScreen(controller: AppController) {
     }
 
     if (confirmingLogout) {
+        val others = accounts.count { it.pubKey != account?.pubKey }
         AlertDialog(
             onDismissRequest = { confirmingLogout = false },
-            title = { Text("Log out?") },
+            title = { Text("Log out of this account?") },
             text = {
-                Text(
+                // Itemised, because logging out erases things that are not
+                // obviously part of "logging out" — a private follow list, two
+                // permission lists, the pictures already fetched — and a
+                // sentence saying "everything" is not something anybody can
+                // check their own understanding against.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Nothing about this account stays on this phone. Wayfarer erases:")
+
+                    ErasedItem(
+                        if (account?.credential is Credential.LocalKey) {
+                            "its secret key — if you have not saved it anywhere, the account is gone, and there " +
+                                "is no reset"
+                        } else {
+                            "how it signs in — no key is held here for it"
+                        },
+                    )
+                    ErasedItem("the relays it allowed, and the picture servers it allowed")
+                    ErasedItem("the follow list kept on this phone, which was never published anywhere")
+                    ErasedItem("every picture already fetched while it was signed in")
+
+                    Text(
+                        "Its public follow list, its profile and its posts are on the network and are not " +
+                            "affected. Signing in again starts from nothing on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    if (others > 0) {
+                        Text(
+                            if (others == 1) {
+                                "The other account signed in here is untouched, and takes over when this one goes."
+                            } else {
+                                "The other $others accounts signed in here are untouched, and one takes over " +
+                                    "when this one goes."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
                     if (account?.credential is Credential.LocalKey) {
-                        "Logging out erases this account's key from this phone. If you have not saved it " +
-                            "anywhere, the account is gone — there is no reset. Show the key first if you are unsure."
-                    } else {
-                        "This account holds no key on this device, so logging out only forgets who you are here."
-                    },
-                )
+                        Text(
+                            "Show the key first if you are unsure.",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
             },
             confirmButton = {
                 // Trail: logging out changes this phone and tells no relay
@@ -127,7 +169,6 @@ fun SettingsScreen(controller: AppController) {
 
     val activityWindow by controller.activityWindowDays.collectAsStateWithLifecycle()
     val headerStyle by controller.headerStyle.collectAsStateWithLifecycle()
-    val accounts by controller.accounts.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(title = { Text("Settings", style = MaterialTheme.typography.titleLarge) })
@@ -271,6 +312,15 @@ fun SettingsScreen(controller: AppController) {
 
             HorizontalDivider()
         }
+    }
+}
+
+/** One line of what logging out destroys, marked as a list rather than prose. */
+@Composable
+private fun ErasedItem(text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("·", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

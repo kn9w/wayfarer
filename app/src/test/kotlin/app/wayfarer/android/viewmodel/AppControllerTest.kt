@@ -652,16 +652,52 @@ class AppControllerTest {
             controller.media.add("image.example")
             runCurrent()
 
+            controller.followLocally(pubKey)
+            runCurrent()
+            assertTrue(controller.localFollows.value.isNotEmpty(), "with something private to leave behind")
+
             controller.logout()
             runCurrent()
 
-            // Not merely out of scope: gone. A grant is standing permission to
-            // open a socket, and an account that has left this phone must not be
-            // able to resume one by signing back in.
+            // Not merely out of scope: gone. Permissions are standing consent to
+            // open a socket, and the follow list kept on this phone is the most
+            // private thing the app holds — an account that has left must not be
+            // able to resume either by signing back in, and nobody using the
+            // phone afterwards should be able to find them.
             assertTrue(
                 settings.values.keys.none { it.contains(leaving.hex) },
-                "no record of what that account allowed is left behind",
+                "no record of what that account allowed or read is left behind",
             )
+            assertTrue(
+                settings.values.values.none { it.contains(pubKey.hex) },
+                "including who it was quietly following",
+            )
+        }
+
+    @Test
+    fun `logging out throws away the pictures that were fetched`() =
+        runTest {
+            var cleared = 0
+            val controller =
+                AppController(
+                    wayfarer(),
+                    TestScope(testScheduler),
+                    clearImageCache = { { cleared++ } },
+                )
+            runCurrent()
+            controller.createAccount()
+            runCurrent()
+            controller.finishBackup()
+            controller.skipEntryPoint()
+            runCurrent()
+
+            controller.logout()
+            runCurrent()
+
+            // The faces and photographs a session drew are a legible trace of
+            // who that account was reading, and a cache hit is answered before
+            // the permission gate is consulted.
+            assertEquals(1, cleared)
         }
 
     @Test

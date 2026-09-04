@@ -107,11 +107,19 @@ Switching is not signing out: nothing is erased, and the account being left keep
 permissions and its follows. Every connection is dropped first, because the sockets that are open
 belong to the account that opened them.
 
-**Logging out is a departure.** The key is erased, and so are both permission lists — a relay grant
-and a picture-server grant are standing permission to open a connection, and leaving them behind
-would mean the next person to sign in with that key resumes talking to those servers without being
-asked, on a phone that may no longer be theirs. Another signed-in account takes over if there is
-one; otherwise the session is left connected to nothing, at the front door.
+**Logging out is a departure: nothing of that account stays on the phone.** Its key, both permission
+lists, the follow list kept on this phone, and every picture already fetched while it was signed in.
+The permissions go because a relay grant and a picture-server grant are standing permission to open a
+connection, and leaving them would mean the next person to sign in with that key resumes talking to
+those servers without being asked. The private follow list goes for the opposite reason: nothing
+about it is public, so nobody could ever discover it had been left behind. The pictures go because
+they are a legible trace of who that account was reading, and because a cache hit is answered before
+the permission gate is consulted. The dialog itemises all of it before anything happens, since
+"log out" does not obviously mean any of those things. Another signed-in account takes over if there
+is one; otherwise the session is left connected to nothing, at the front door.
+
+Switching accounts erases none of it — that is the difference between leaving and putting something
+down.
 
 ## The two relay lists
 

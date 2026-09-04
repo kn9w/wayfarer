@@ -143,16 +143,23 @@ class Wayfarer private constructor(
     }
 
     /**
-     * Erases everything [account] consented to on this device.
+     * Erases everything this device holds for [account].
      *
-     * Logging out, as opposed to switching away. Both lists are standing
-     * permission to open a connection, so leaving them behind would mean the
-     * next person to sign in with that key resumes talking to relays and picture
-     * servers without being asked — on a phone that may no longer be theirs.
+     * Logging out, as opposed to switching away: nothing of an account that has
+     * left is kept. The two permission lists are standing permission to open a
+     * connection, so leaving them would mean the next person to sign in with
+     * that key resumes talking to relays and picture servers without being
+     * asked — on a phone that may no longer be theirs. The follow list kept on
+     * this phone goes for the opposite reason: nothing about it is public, so
+     * nobody could ever discover it had been left behind.
+     *
+     * The key itself is erased by [AccountManager.logout], which is the same
+     * act; it lives there because that is where the secret store is reached.
      */
-    suspend fun forgetPermissionsOf(account: PubKey) {
+    suspend fun forgetEverythingAbout(account: PubKey) {
         relayDirectory.forget(account)
         mediaDirectory.forget(account)
+        localFollows.forget(account)
     }
 
     companion object {

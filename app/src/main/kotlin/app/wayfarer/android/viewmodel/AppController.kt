@@ -69,6 +69,15 @@ class AppController(
      * they are in.
      */
     private val externalSignerName: () -> String? = { null },
+    /**
+     * Throws away every cached picture, or does nothing where no loader is
+     * wired up.
+     *
+     * A provider rather than the hook itself, for the reason the others are —
+     * and used in exactly one place: logging out, where the pictures an account
+     * drew are as much its trace as the lists it granted.
+     */
+    private val clearImageCache: () -> (suspend () -> Unit)? = { null },
 ) {
     private val screenState = MutableStateFlow<Screen>(Screen.Home)
 
@@ -715,13 +724,13 @@ class AppController(
         goToRoot(Screen.Home)
 
         quietly {
-            // Erased, not put away. A relay grant and a picture-server grant are
-            // standing permission to open a connection; an account that has left
-            // this phone should not be able to resume those by signing back in,
-            // least of all on somebody else's device.
-            leaving?.let { core.forgetPermissionsOf(it) }
+            // Erased, not put away: nothing of an account that has left this
+            // phone is kept — its permissions, its private follow list and, in
+            // AccountManager, its key. Somebody else's device must not be able
+            // to resume any of it by signing back in.
             core.contacts.clear()
-            core.localFollows.clear()
+            leaving?.let { core.forgetEverythingAbout(it) }
+            clearImageCache()?.invoke()
 
             when (val next = core.accounts.logout()) {
                 // Somebody else is still signed in, so this is a departure from

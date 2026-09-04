@@ -124,6 +124,10 @@ fun WayfarerApp(
     val currentDeviceAuth = rememberUpdatedState(deviceAuth)
     val currentQrScan = rememberUpdatedState(qrScan)
     val currentSignerName = rememberUpdatedState(externalSignerName)
+    // Taken from the composition local the activity already provides, so this
+    // needs no new parameter and cannot go stale against the loader in use.
+    val images = LocalImageLoader.current
+    val currentImages = rememberUpdatedState(images)
     val controller =
         remember(core) {
             AppController(
@@ -133,6 +137,7 @@ fun WayfarerApp(
                 deviceAuth = { currentDeviceAuth.value },
                 qrScan = { currentQrScan.value },
                 externalSignerName = { currentSignerName.value },
+                clearImageCache = { currentImages.value?.let { loader -> ({ loader.clear() }) } },
             )
         }
 
