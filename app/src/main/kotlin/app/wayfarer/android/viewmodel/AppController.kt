@@ -747,6 +747,21 @@ class AppController(
         clearSessionState()
         goToRoot(Screen.Home)
 
+        // The screen changes on the same frame as the press, before any of the
+        // erasing below has run. Log out is reached *during* whatever the app
+        // was doing — that is when people reach for it — and the erasure waits
+        // on the network work already in flight. Leaving the departure inside
+        // that coroutine meant pressing it did nothing visible until a held
+        // fetch came back, which reads as a dead button on the one screen where
+        // that is least acceptable.
+        //
+        // Only when nobody is left to take over. With another account signed in
+        // this is a switch rather than a departure, and showing the front door
+        // for a frame on the way there would be a flicker announcing something
+        // that is not happening.
+        val nobodyLeft = core.accounts.accounts.value.none { it.pubKey != leaving }
+        if (nobodyLeft) onboardingState.value = OnboardingStep.Start
+
         quietly {
             // Erased, not put away: nothing of an account that has left this
             // phone is kept — its permissions, its private follow list and, in
@@ -1239,7 +1254,7 @@ class AppController(
         val me = core.accounts.account.value
         val canSign = me != null && me.canSign
         val hasWriteRelay = core.relayDirectory.grants.values.any { it.write }
-        relayListPromptState.value = canSign && hasWriteRelay && core.relayLists[me!!.pubKey] == null
+        relayListPromptState.value = canSign && hasWriteRelay && core.relayLists[me.pubKey] == null
     }
 
     // ---- profiles ---------------------------------------------------------

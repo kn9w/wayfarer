@@ -31,6 +31,11 @@ kotlin {
             kotlin.srcDir("src/testFixtures/kotlin")
 
             dependencies {
+                // Left as the helper here, unlike the Android modules: `core`
+                // applies the Kotlin multiplatform plugin, which is what
+                // supplies the version and picks the framework variant. The
+                // modules AGP compiles have no such plugin any more and so name
+                // the artifact in full.
                 implementation(kotlin("test"))
                 implementation(libs.kotlinx.coroutines.test)
             }

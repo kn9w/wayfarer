@@ -198,7 +198,8 @@ private fun VideoSurface(url: String) {
     // Loading until the fetch answers. Keyed on the URL and the loader, so
     // opening a different video starts a different download.
     val local by produceState<VideoSource>(initialValue = VideoSource.Fetching, url, loader) {
-        value = loader?.video(url)?.let(VideoSource::Ready) ?: VideoSource.Unavailable
+        val file = loader?.video(url)
+        value = if (file != null) VideoSource.Ready(file) else VideoSource.Unavailable
     }
 
     var failed by remember(url) { mutableStateOf(false) }

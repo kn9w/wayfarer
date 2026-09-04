@@ -54,8 +54,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -63,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.wayfarer.android.ui.PostPictures
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.rememberCopyToClipboard
 import app.wayfarer.android.ui.theme.localAccent
 import app.wayfarer.android.ui.theme.publicAccent
 import app.wayfarer.android.ui.theme.publicButtonColors
@@ -475,7 +474,7 @@ private fun RelayPane(
         EmptyPane {
             Text("Nothing from this relay yet", style = MaterialTheme.typography.titleSmall)
             Text(
-                "${global.relay?.display()} has not handed anything over. It may be quiet, or still connecting.",
+                "${global.relay.display()} has not handed anything over. It may be quiet, or still connecting.",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -1226,7 +1225,7 @@ internal fun EventMenu(
     var open by remember { mutableStateOf(false) }
     var showingJson by remember { mutableStateOf(false) }
     var rebroadcasting by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
+    val copy = rememberCopyToClipboard()
 
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.size(28.dp)) {
@@ -1245,7 +1244,7 @@ internal fun EventMenu(
                     // form NIP-21 defines and the form another client — or a
                     // post written here — can actually resolve. The hex is
                     // still one item down, in the raw JSON.
-                    clipboard.setText(AnnotatedString(controller.shareableEventId(id)))
+                    copy(controller.shareableEventId(id))
                     open = false
                 },
             )
@@ -1269,7 +1268,7 @@ internal fun EventMenu(
     if (showingJson) {
         RawJsonDialog(
             json = controller.rawJsonOf(id),
-            onCopy = { clipboard.setText(AnnotatedString(it)) },
+            onCopy = copy,
             onDismiss = { showingJson = false },
         )
     }

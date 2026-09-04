@@ -6,6 +6,7 @@ import app.wayfarer.core.outbox.RelayListCache
 import app.wayfarer.core.relay.RelayDirectory
 import app.wayfarer.core.repo.FeedRepository
 import app.wayfarer.core.repo.RelayListRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -20,6 +21,11 @@ import kotlin.test.assertTrue
  * — which is every new user — so it is the one that decides whether the app
  * shows "0 connected" between refreshes.
  */
+// `advanceUntilIdle` is still experimental. It is the right tool here anyway:
+// these tests assert on what a live subscription has delivered, which means
+// letting the test scheduler run everything already queued and then looking —
+// the opt-in is acknowledged rather than worked around.
+@OptIn(ExperimentalCoroutinesApi::class)
 class FeedRepositoryLiveTest {
     private val alice = pubKey(1)
     private val clock = FakeClock()

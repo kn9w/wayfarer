@@ -1,12 +1,11 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // The Compose compiler plugin is still applied by hand: AGP 9's built-in
+    // Kotlin replaces kotlin-android and nothing else.
     alias(libs.plugins.kotlin.compose)
 }
 
-kotlin {
-    jvmToolchain(17)
-}
+// See nostr-quartz: jvmTarget follows compileOptions.targetCompatibility now.
 
 android {
     namespace = "app.wayfarer.android"
@@ -24,9 +23,40 @@ android {
         compose = true
     }
 
+    /**
+     * Signing material comes from the environment, never from this repository.
+     *
+     * Absent on a normal checkout, which is deliberate: `assembleRelease` then
+     * produces an unsigned APK rather than failing, so a contributor — and CI on
+     * every push — can prove the release build and R8 both work without holding
+     * the upload key.
+     */
+    val keystore = System.getenv("WAYFARER_KEYSTORE")?.takeIf { it.isNotBlank() }
+
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("WAYFARER_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WAYFARER_KEY_ALIAS")
+                keyPassword = System.getenv("WAYFARER_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // On, and it is not only about size. Quartz brings a large graph
+            // this app uses a corner of — storage, sync and a chess library
+            // among it — and shipping the unused remainder is both dead weight
+            // and attack surface that R8 can simply remove.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -70,6 +100,6 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     // Nip55Protocol is pure Kotlin, so its tests run as plain JVM unit tests.
-    testImplementation(kotlin("test"))
+    testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

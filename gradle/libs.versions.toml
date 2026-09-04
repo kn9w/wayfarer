@@ -1,16 +1,24 @@
 # Single source of truth for every third-party version in the project.
 #
-# The three androidx / AGP entries below could not be verified against Google's
-# Maven repository from the machine this was authored on (dl.google.com was not
-# reachable). They are the only versions in this file that may need a bump.
+# The androidx entries below still cannot be verified from a machine without
+# access to Google's Maven repository — CI is what checks them. AGP and
+# compileSdk are no longer guesses: Quartz's own AAR metadata declares
+# `minCompileSdk=37`, and androidx.core and Compose additionally declare
+# `minAndroidGradlePluginVersion=9.1.0`, so both had to move together. See the
+# note on compileSdk below.
 [versions]
-agp = "8.13.0"
+agp = "9.4.0"
 kotlin = "2.4.10"
 coroutines = "1.11.0"
 
 # Quartz. This is the ONLY nostr dependency; everything under com.vitorpamplona.*
 # arrives through it. See README "What is used from Quartz".
 quartz = "1.14.0"
+
+# Not a dependency this project chose — Quartz brings secp256k1-kmp, and this
+# pins the version it brings so the JVM-native variant below cannot drift away
+# from the Android one on the compile classpath.
+secp256k1 = "0.24.0"
 okhttp = "5.5.0"
 
 # QR scanning: CameraX for the viewfinder, ZXing's pure-Java core for the decode.
@@ -23,8 +31,17 @@ androidxActivity = "1.11.0"
 androidxLifecycle = "2.9.4"
 composeBom = "2025.09.00"
 
-compileSdk = "36"
+# Not a preference — a requirement of the dependencies. Quartz publishes
+# `minCompileSdk=37` in its AAR metadata (every version back to 1.12.6 does), and
+# androidx.core 1.19.0 and Compose 1.12.0, which Quartz pulls up transitively,
+# require it too. Compiling against 37 only makes newer APIs available; it does
+# not change how the app behaves at runtime.
+compileSdk = "37"
 minSdk = "26"
+
+# Deliberately left at 36. targetSdk is the opt-in to new runtime behaviour and
+# is the one of the three that can break a working app, so it moves on its own
+# and with a device to test on — not as a side effect of a dependency bump.
 targetSdk = "36"
 
 [libraries]
@@ -34,6 +51,23 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+
+# Named in full, with a framework, rather than left to `kotlin("test")`. That
+# helper resolves to a versionless `org.jetbrains.kotlin:kotlin-test` and relies
+# on the Kotlin Gradle plugin to supply both the version and the variant that
+# maps `kotlin.test.Test` onto a real test framework. AGP 9's built-in Kotlin
+# does not apply that plugin, so the helper silently selected a variant with no
+# JVM `Test` annotation in it and every test file failed on its import.
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+
+# Test-only, and only because of where these tests run. Quartz depends on
+# `secp256k1-kmp-jni-android`, whose native libraries are Android `.so` files
+# for a device. A local unit test is a plain JVM process on the build machine,
+# which cannot load them — so the real signing and verification these tests do
+# died in a static initialiser with UnsatisfiedLinkError. This is the same
+# library built with desktop natives, on the test runtime classpath only. It
+# ships in nothing.
+secp256k1-jni-jvm = { module = "fr.acinq.secp256k1:secp256k1-kmp-jni-jvm", version.ref = "secp256k1" }
 
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "androidxCamera" }
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidxCamera" }
@@ -56,5 +90,4 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

@@ -110,8 +110,25 @@ class AppControllerTest {
             assertTrue(transport.fetched.isEmpty(), "nothing may be queried before a relay is approved")
         }
 
+    /**
+     * A returning guest is asked where to start, and is not introduced again.
+     *
+     * Three answers are possible here and the difference between them is the
+     * whole point. This test used to assert `null` — nothing to ask — from back
+     * when relay permissions were one record for the device and onboarding was
+     * a first-run event. Permissions belong to an account now and a guest's are
+     * deliberately never written down, so the next guest session genuinely may
+     * reach nothing, and sending them into an app that can contact nothing with
+     * no explanation is the outcome that has to be avoided.
+     *
+     * But not [OnboardingStep.Start] either, which would be the introduction
+     * from the top for somebody who has already read it. Having completed
+     * onboarding is still remembered; what is not remembered is a guest's
+     * grants. So the one question actually still open is the one that gets
+     * asked.
+     */
     @Test
-    fun `once onboarding is done it is not shown again`() =
+    fun `a returning guest is asked where to start, not introduced again`() =
         runTest {
             val settings = FakeKeyValueStore()
             val first = AppController(wayfarer(settings), TestScope(testScheduler))
@@ -123,7 +140,11 @@ class AppControllerTest {
             val second = AppController(wayfarer(settings), TestScope(testScheduler))
             runCurrent()
 
-            assertNull(second.onboarding.value, "a returning guest is not a new user")
+            assertEquals(
+                OnboardingStep.EntryPoint,
+                second.onboarding.value,
+                "a guest's grants are never stored, so the next session is asked for somewhere to start",
+            )
         }
 
     @Test
@@ -1185,7 +1206,10 @@ class AppControllerTest {
 
             val grant = core.relayDirectory.grants[RelayUrl("wss://entry.example/")]
             assertTrue(grant?.read == true)
-            assertFalse(grant?.write == true)
+            // Not `grant?.write`: assertTrue's contract has already established
+            // that grant is not null, so the compiler rejects the safe call as
+            // redundant.
+            assertFalse(grant.write)
             assertNull(controller.onboarding.value)
         }
 
@@ -1355,10 +1379,14 @@ class AppControllerTest {
     fun `publishing payment addresses is its own event, not part of the profile`() =
         runTest {
             val core = wayfarer()
-            core.relayDirectory.approve(relay("write.example"), read = true, write = true)
             val controller = AppController(core, TestScope(testScheduler))
             runCurrent()
             controller.createAccount()
+            runCurrent()
+            // After sign-in, not before: creating an account scopes the
+            // permission list to it, which starts empty. A relay approved
+            // before that belonged to the guest session that no longer exists.
+            core.relayDirectory.approve(relay("write.example"), read = true, write = true)
             runCurrent()
             transport.published.clear()
 
@@ -1381,10 +1409,17 @@ class AppControllerTest {
     fun `loading more asks for what came before the oldest post held`() =
         runTest {
             val core = wayfarer()
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
+            // Past onboarding and with the relay granted afterwards: nothing is
+            // contacted while onboarding is on screen, and startup scopes the
+            // permission list, so both have to happen before a grant sticks.
+            controller.continueWithoutAccount()
+            controller.skipEntryPoint()
+            runCurrent()
             core.relayDirectory.approve(relay("open.example"), read = true, write = false)
             core.feed.absorb(noteEvent(pubKey, "older", createdAt = 400, idSeed = 31), null)
             core.feed.absorb(noteEvent(pubKey, "newer", createdAt = 900, idSeed = 32), null)
-            val controller = AppController(core, TestScope(testScheduler))
             runCurrent()
             transport.fetched.clear()
 
@@ -1695,11 +1730,17 @@ class AppControllerTest {
             val sendable = relay("send.example")
             val readOnly = relay("read.example")
             val blocked = relay("blocked.example")
+
+            // Granted after the controller has started, not before. Startup
+            // scopes the directory to whoever is signed in — a guest, here —
+            // and a guest's list is deliberately a fresh one that is never
+            // written down, so anything approved before this point is discarded
+            // by the very act of starting up.
+            val controller = AppController(core, TestScope(testScheduler))
+            runCurrent()
             core.relayDirectory.approve(sendable, read = true, write = true)
             core.relayDirectory.approve(readOnly, read = true, write = false)
             core.relayDirectory.deny(blocked)
-
-            val controller = AppController(core, TestScope(testScheduler))
             runCurrent()
 
             assertEquals(listOf(sendable), controller.rebroadcastTargets())

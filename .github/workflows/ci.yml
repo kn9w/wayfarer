@@ -1,0 +1,158 @@
+# Build and test every module, on every push.
+#
+# Written once for both forges. Gitea Actions reads the GitHub Actions workflow
+# syntax and looks in `.gitea/workflows` first, falling back to
+# `.github/workflows` — this file — so the same pipeline runs on Gitea and on
+# GitHub with nothing duplicated. Two things differ in practice and both are
+# handled below:
+#
+#   * The Android SDK. GitHub's hosted runners ship it; the images Gitea's
+#     act_runner uses by default do not. `setup-android` installs it where it is
+#     missing and accepts the licences where it is not, so neither forge needs a
+#     special case.
+#   * Action resolution. Gitea fetches actions from github.com unless its
+#     runner is configured otherwise, so every action here is named with its
+#     full `owner/name@version`, never a Gitea-local shorthand.
+#
+# The `core` module is a Kotlin Multiplatform project with no Android target, so
+# it has no `test` task — `./gradlew test` silently skips it, which is exactly
+# the trap this file exists to close. Every test task is therefore named.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two JDKs on purpose. Gradle itself runs on the last one listed (21),
+      # which is what AGP 9 wants; the modules compile against a 17 toolchain,
+      # which Gradle finds by auto-detection. Installing only 17 leaves AGP
+      # short, and installing only 21 leaves `jvmToolchain(17)` with nothing to
+      # resolve to.
+      - name: Set up JDKs
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      # Present on GitHub's runners, absent from most Gitea runner images.
+      # Installs where missing, accepts licences where not.
+      #
+      # No package is named here on purpose. Naming `platforms;android-37`
+      # looked like the careful thing to do and was worse: the runner's
+      # sdkmanager could not see that package and failed the job before Gradle
+      # ever ran, which says nothing about whether the build can get it. AGP
+      # downloads the platform it needs, and it is the component that actually
+      # knows which that is.
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      # Diagnostic, never fatal. If the build cannot obtain a platform, the
+      # answer to "which ones exist, and is 37 among them or still a preview
+      # under a codename" should already be in this log rather than needing
+      # another run to find out.
+      - name: What the SDK offers
+        continue-on-error: true
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -1)
+          echo "sdkmanager: ${SDKMANAGER:-not found}"
+          [ -n "$SDKMANAGER" ] || exit 0
+          echo "--- installed ---"
+          "$SDKMANAGER" --list_installed 2>/dev/null || true
+          echo "--- platforms on offer (stable channel) ---"
+          "$SDKMANAGER" --list 2>/dev/null | grep -E '^\s+platforms;android-' | sort -u || true
+          echo "--- platforms on offer (including previews) ---"
+          "$SDKMANAGER" --list --channel=3 2>/dev/null | grep -E '^\s+platforms;android-' | sort -u || true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle.kts') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Check the wrapper is executable
+        run: chmod +x ./gradlew
+
+      # Named individually and deliberately. `core` is multiplatform and has no
+      # plain `test` task, so a single `./gradlew test` would report success
+      # having run none of its tests — which is how 146 of them went unexecuted
+      # for the life of the project.
+      # No --stacktrace. A Kotlin compilation failure prints the lines that
+      # matter — `e: file:///…: message` — and then Gradle prints two hundred
+      # lines of its own Java stack, which says only that a compile task failed.
+      # The stack buries the diagnosis, and on a run that has to be read by
+      # someone scrolling a web log it buries it completely.
+      - name: Test
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon \
+            :core:jvmTest \
+            :nostr-quartz:testDebugUnitTest \
+            :app:testDebugUnitTest \
+            2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Assemble the debug APK
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebug 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      # Proves R8 runs clean against the real dependency graph. A release build
+      # that only happens at release time is a release-day problem.
+      - name: Assemble the release APK (unsigned)
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleRelease 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Android Lint
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:lintDebug 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      # Last, and only on a failure, so the compiler's own diagnosis is the final
+      # thing in the log rather than something to scroll back through Gradle's
+      # Java stack to find. Placed here rather than after the test step so that it
+      # catches a failure from any of them.
+      - name: Compiler errors
+        if: failure()
+        run: |
+          echo "── Kotlin and Java errors ──"
+          grep -E '^(e:|w:|.*error:)' "$RUNNER_TEMP/build.log" | head -300 \
+            || echo "(no compiler diagnostics in the log — the failure was not a compile)"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+            **/build/reports/lint-results-*.html
+          if-no-files-found: ignore
+          retention-days: 14

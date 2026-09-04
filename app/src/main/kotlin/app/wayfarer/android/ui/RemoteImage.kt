@@ -117,7 +117,7 @@ fun Avatar(
     val picture = profile?.picture
     val tap =
         when {
-            undecided && onOpenMedia != null -> ({ onOpenMedia(host!!) })
+            undecided && onOpenMedia != null -> ({ onOpenMedia(host) })
             drawn && picture != null && onOpenPicture != null -> ({ onOpenPicture(picture) })
             else -> onClick
         }
@@ -190,7 +190,7 @@ fun BannerImage(
 
     val tap: (() -> Unit)? =
         when {
-            undecided && onOpenMedia != null -> ({ onOpenMedia(host!!) })
+            undecided && onOpenMedia != null -> ({ onOpenMedia(host) })
             drawn && banner != null && onOpenPicture != null -> ({ onOpenPicture(banner) })
             else -> null
         }
@@ -218,7 +218,7 @@ fun BannerImage(
             }
         } else if (undecided && onOpenMedia != null) {
             MediaBadge(
-                label = "picture on ${host!!.display()}",
+                label = "picture on ${host.display()}",
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
                 onClick = { onOpenMedia(host) },
             )

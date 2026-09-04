@@ -11,7 +11,10 @@ explicitly approved by the user.
 - Create an account, or log in with an `npub` (watch-only), an `nsec`, or an external signer app.
 - **Your key stays reachable, and stays off the screen record** — the `nsec` is encrypted by an
   `AndroidKeyStore` key, shown once at setup on a screen with no way to leave it by accident, and
-  readable again in Settings behind the device's own lock screen. Both screens that can show it set
+  readable again in Settings behind the device's own lock screen. A phone with no lock screen is
+  told so and shown the key anyway, because refusing would lock somebody out of their own key over a
+  setting they chose; a phone that *has* a lock screen and could not show it is a failure, and a
+  failure is not a confirmation, so the key stays hidden. Both screens that can show it set
   `FLAG_SECURE`, so it is kept out of screenshots, screen recordings and the task switcher's
   snapshot — a lock screen in front of the key is worth little if backgrounding the app hands the
   same key to the recents thumbnail — and leaving the app puts it away again.
@@ -133,7 +136,7 @@ separate view models, and says on each what the other is.
 | Where it lives | This phone, in app settings | A signed kind 10002 on the network |
 | Who can see it | Nobody | Anyone |
 | Reached from | The Relays tab | Your own profile → *Where others find you* |
-| Changing it | Opens or closes connections here | Publishes nothing until you press Publish |
+| Changing it | Opens or closes connections here — blocking one drops the socket it already had | Publishes nothing until you press Publish |
 
 The editor is a draft until published, and says so: with no kind 10002 yet, it offers the relays
 you allow here as a *starting point* rather than presenting them as a fact about you. A relay can
@@ -161,7 +164,10 @@ to catch the bug it is there for.
 Reading a relay's NIP-11 document is an HTTPS request to that relay, so it is treated as a separate
 consent: it happens only when you tap "Fetch relay info", and for a relay with no grant a dialog
 names the host first. It does not follow redirects — the consent was for the host in that dialog,
-and a 302 would spend it on somebody else who then has your IP address.
+and a 302 would spend it on somebody else who then has your IP address. It is bounded and timed out
+like any other read of a stranger's answer: a relay gets fifteen seconds and half a megabyte, and a
+relay that accepts the connection and then says nothing fails rather than holding that entry on
+"loading" for the rest of the session.
 
 ## Pictures, and the servers they come from
 
@@ -196,8 +202,14 @@ allowed host plays full-window in the platform's own `VideoView` — no media de
 started by scrolling past it: the still carries a play button, and the tap is the request. A video
 whose host is undecided is still only named, with the badge that leads to that decision.
 
-Video is queued and decided about like anything else and then named rather than played: Wayfarer
-has no player, and an honest line beats a frame that never starts.
+**The video is downloaded before it is played, and that is a security property rather than a
+buffering strategy.** `VideoView` handed a remote URL fetches it with `MediaPlayer`, which does its
+own networking: nothing about that request passes through `GatedImageRequests`, so the interceptor
+registered twice — once so the disk cache cannot route around it, once so a *redirect* cannot — saw
+none of it, and `MediaPlayer` follows redirects on its own, so an allowed host could send the
+request and your IP address anywhere it liked. So the bytes come through the same client and the
+same gate as every picture, and the player is handed a file. Nothing plays until the whole file has
+arrived, and one too large to hold is refused and said so rather than streamed.
 
 ## When something goes wrong
 
@@ -336,23 +348,34 @@ Android plugin and builds on the JDK alone. `google()` is needed as a repository
 
 ## Status
 
-`core`, `nostr-quartz`, the view models and the Compose UI are compile-verified, with 211 unit tests
-covering the relay gate, the set-cover router, NIP-11 consent, NIP-23 addressable replacement, the
-NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its separation from the local
-permission list, the onboarding sequence — including that a first launch
+`core` builds and tests under Gradle on its own — `:core:jvmTest` runs its 236 tests green — which
+is possible precisely because it applies no Android plugin.
+
+Every module is built and tested in CI on every push: `:core:jvmTest`,
+`:nostr-quartz:testDebugUnitTest` and `:app:testDebugUnitTest`, then a debug APK, a release APK
+through R8, and Android Lint. The workflow lives in `.github/workflows/ci.yml` and runs unmodified
+on both Gitea Actions and GitHub Actions — Gitea reads the same syntax and falls back to
+`.github/workflows` when `.gitea/workflows` is absent.
+
+374 unit tests cover the relay gate, the set-cover router, NIP-11 consent and its timeout, NIP-23
+addressable replacement, the NIP-55 wire format, `nprofile` relay hints, NIP-65 publishing and its
+separation from the local permission list, the bounds on every in-memory store, that blocking a
+relay closes the socket it already had, and the onboarding sequence — including that a first launch
 queries nothing, that the key screen is unreachable from the tab bar, and that logging in asks
-before touching the app's own relays — and round-trips through real secp256k1 signing and real
+before touching the app's own relays — with round-trips through real secp256k1 signing and real
 Quartz parsing.
 
-`core` builds and tests under Gradle itself — `:core:jvmTest` runs its 167 tests green — which is
-possible precisely because it no longer applies the Android plugin. The rest of the Android build
-has not been run: `dl.google.com` was unreachable from the machine this was written on, so no
-androidx artifact or Android SDK could be fetched. The modules were verified by
-compiling against `quartz-jvm` and Compose Multiplatform, which mirror the same APIs, on a plain
-JVM. Eight files touching Android-only APIs are therefore unverified — `MainActivity`,
-`WayfarerApplication`, `AndroidStores`, `Nip55Bridge`, `AppSignerFactory`, `DeviceAuthBridge`,
-`SecureScreen` and `QrScan` (the CameraX viewfinder in particular) — as are the AGP, `compileSdk`,
-Compose BOM and CameraX versions in `gradle/libs.versions.toml`.
+The release build shrinks through R8 (`app/proguard-rules.pro`) and is signed from environment
+variables, never from anything in this repository. **R8 changes what runs**: a release build has to
+be smoke-tested on a device — sign in, approve a relay, read a feed, open a picture, publish a note
+— before it is distributed. `assembleRelease` succeeding proves only that shrinking completed.
+
+## Releasing
+
+See [docs/RELEASING.md](docs/RELEASING.md). Two gates come before anything else:
+CI has to go green once — which is the first time a compiler will ever have seen
+the Android modules — and a release build has to be smoke-tested on a device,
+because R8 changes what runs.
 
 ## License
 

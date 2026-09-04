@@ -1,0 +1,103 @@
+# Builds a signed release on a version tag.
+#
+# Runs on Gitea and GitHub alike — see the note at the top of `ci.yml`. The
+# signing material comes entirely from secrets; nothing about the keystore is in
+# this repository, and the build falls back to an unsigned artifact if the
+# secrets are absent so that a fork can still tag without failing.
+#
+# Required secrets (Settings → Secrets on either forge):
+#
+#   KEYSTORE_BASE64        the .jks file, base64 encoded
+#   KEYSTORE_PASSWORD      the keystore password
+#   KEY_ALIAS              the alias of the signing key inside it
+#   KEY_PASSWORD           that key's password
+#
+# The upload keystore is the single thing in this pipeline that cannot be
+# regenerated: losing it means never being able to update the app under the same
+# Play listing again. Keep a copy somewhere other than the forge.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  release:
+    name: Signed build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two JDKs on purpose. Gradle itself runs on the last one listed (21),
+      # which is what AGP 9 wants; the modules compile against a 17 toolchain,
+      # which Gradle finds by auto-detection. Installing only 17 leaves AGP
+      # short, and installing only 21 leaves `jvmToolchain(17)` with nothing to
+      # resolve to.
+      - name: Set up JDKs
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Left to AGP, which knows which platform it needs. See ci.yml.
+          packages: ''
+
+      - name: Check the wrapper is executable
+        run: chmod +x ./gradlew
+
+      # The tests gate the release. A tag is not a reason to skip them.
+      - name: Test
+        run: |
+          ./gradlew --no-daemon \
+            :core:jvmTest \
+            :nostr-quartz:testDebugUnitTest \
+            :app:testDebugUnitTest
+
+      - name: Decode the keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No keystore secret set — the build will be unsigned." >&2
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Outside the workspace, so it cannot be picked up by an artifact glob.
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build the release bundle and APK
+        env:
+          WAYFARER_KEYSTORE: ${{ steps.keystore.outputs.signed == 'true' && format('{0}/upload.jks', runner.temp) || '' }}
+          WAYFARER_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          WAYFARER_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          WAYFARER_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:bundleRelease :app:assembleRelease
+
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayfarer-release
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90

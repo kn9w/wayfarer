@@ -217,7 +217,23 @@ class QuartzNostrCodec : NostrCodec {
             sig = "",
         ).toJson()
 
-    override fun decodeEvent(json: String): NostrEvent? = Event.fromJsonOrNull(json)?.let(QuartzEventMapping::toCore)
+    /**
+     * Parses JSON that came from outside this app, and answers null for anything
+     * that is not an event.
+     *
+     * `runCatching` despite the `OrNull` in the callee's name, because the name
+     * is not the contract: Quartz's `fromJsonOrNull` returns null for some
+     * malformed input and throws for the rest — a bare `"not json"` throws out
+     * of Jackson before Quartz sees it.
+     *
+     * That matters more here than the general case. This is the trust boundary
+     * with an external NIP-55 signer: any installed app can register the
+     * `nostrsigner` scheme, appear in the chooser, and hand back whatever it
+     * likes. "Publishing failed" is the correct outcome for garbage; a
+     * RuntimeException out of a parser is not.
+     */
+    override fun decodeEvent(json: String): NostrEvent? =
+        runCatching { Event.fromJsonOrNull(json)?.let(QuartzEventMapping::toCore) }.getOrNull()
 
     /**
      * The signed event, as JSON. Same construction as [encodeForSigning], with

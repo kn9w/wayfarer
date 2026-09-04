@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -51,8 +51,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +62,7 @@ import app.wayfarer.android.ui.MediaViewer
 import app.wayfarer.android.ui.NpubQrCard
 import app.wayfarer.android.ui.ScreenHeader
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import app.wayfarer.android.ui.rememberCopyToClipboard
 import app.wayfarer.android.ui.theme.localAccent
 import app.wayfarer.android.ui.theme.localContainer
 import app.wayfarer.android.ui.theme.localOutlinedButtonColors
@@ -333,7 +332,7 @@ private fun ProfileHeader(
     val profiles by controller.profiles.collectAsStateWithLifecycle()
     val profile = profiles[pubKey]
     val npub = controller.npubFor(pubKey)
-    val clipboard = LocalClipboardManager.current
+    val copy = rememberCopyToClipboard()
     var showQr by remember { mutableStateOf(false) }
     var bioExpanded by remember(pubKey) { mutableStateOf(false) }
     var viewing by remember(pubKey) { mutableStateOf<String?>(null) }
@@ -417,7 +416,7 @@ private fun ProfileHeader(
                 name = profile?.name,
                 npub = npub,
                 controller = controller,
-                onCopy = { clipboard.setText(AnnotatedString(it)) },
+                onCopy = copy,
                 onShowQr = { showQr = true },
             )
 
@@ -436,14 +435,14 @@ private fun ProfileHeader(
             profile?.nip05?.let { Nip05Line(it) }
 
             profile?.website?.let { website ->
-                IdentityChip(label = website, onClick = { clipboard.setText(AnnotatedString(website)) })
+                IdentityChip(label = website, onClick = { copy(website) })
             }
 
             PaymentTargets(
                 pubKey = pubKey,
                 lightningAddress = profile?.lud16,
                 controller = controller,
-                onCopy = { clipboard.setText(AnnotatedString(it)) },
+                onCopy = copy,
             )
 
             FactsRow(
