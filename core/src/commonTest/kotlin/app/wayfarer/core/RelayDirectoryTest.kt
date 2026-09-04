@@ -2,6 +2,7 @@ package app.wayfarer.core
 
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
+import app.wayfarer.core.relay.RelayAccessPolicy
 import app.wayfarer.core.relay.RelayDirectory
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -107,5 +108,43 @@ class RelayDirectoryTest {
 
             assertTrue(relay("suggested.example") in directory.pending)
             assertFalse(directory.isApproved(relay("suggested.example")))
+        }
+
+    @Test
+    fun `the policy view answers each direction separately`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            val readOnly = relay("read-only.example")
+            val writeOnly = relay("write-only.example")
+
+            directory.approve(readOnly, read = true, write = false)
+            directory.approve(writeOnly, read = false, write = true)
+
+            // Seen through the interface the transport actually holds, because
+            // that is where the distinction has to survive.
+            val policy: RelayAccessPolicy = directory
+
+            // Both are approved for *something*, which is what a socket needs to
+            // know and all it needs to know.
+            assertTrue(policy.isApproved(readOnly))
+            assertTrue(policy.isApproved(writeOnly))
+
+            assertTrue(policy.canRead(readOnly))
+            assertFalse(policy.canWrite(readOnly), "\"Get posts\" is not \"and send mine\"")
+
+            assertFalse(policy.canRead(writeOnly))
+            assertTrue(policy.canWrite(writeOnly))
+        }
+
+    @Test
+    fun `a relay with no grant answers no to every question`() =
+        runTest {
+            val directory = RelayDirectory(FakeClock())
+            val policy: RelayAccessPolicy = directory
+            val unknown = relay("unknown.example")
+
+            assertFalse(policy.isApproved(unknown))
+            assertFalse(policy.canRead(unknown))
+            assertFalse(policy.canWrite(unknown))
         }
 }

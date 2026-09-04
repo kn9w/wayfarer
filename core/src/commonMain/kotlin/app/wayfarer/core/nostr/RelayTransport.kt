@@ -15,8 +15,12 @@ import kotlinx.coroutines.flow.StateFlow
  * transport just executes it.
  *
  * Implementations must treat the relay sets they are handed as already
- * authorised, and must additionally refuse any URL rejected by the
- * [app.wayfarer.core.relay.RelayAccessPolicy] they were built with.
+ * authorised, and must additionally refuse any URL the
+ * [app.wayfarer.core.relay.RelayAccessPolicy] they were built with does not
+ * permit *in the direction being used* — `canRead` for [subscribe] and [fetch],
+ * `canWrite` for [publish]. Not `isApproved`: that is the union of the two, and
+ * a relay the user allowed to send them posts is not one they agreed to post
+ * to.
  */
 interface RelayTransport {
     /** Relays with a live socket right now. */

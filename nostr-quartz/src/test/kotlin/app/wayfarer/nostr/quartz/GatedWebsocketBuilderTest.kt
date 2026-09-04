@@ -19,7 +19,20 @@ class GatedWebsocketBuilderTest {
     private val approved = NormalizedRelayUrl("wss://approved.example/")
     private val unapproved = NormalizedRelayUrl("wss://unapproved.example/")
 
-    private val policy = RelayAccessPolicy { it == RelayUrl(approved.url) }
+    /**
+     * Read-only on purpose. The socket gate must let a relay approved for reading
+     * alone be dialled — a read needs a real connection like anything else — so a
+     * policy that grants only reading is the case that would break if this gate
+     * ever went looking for a direction.
+     */
+    private val policy =
+        object : RelayAccessPolicy {
+            override fun isApproved(url: RelayUrl) = canRead(url) || canWrite(url)
+
+            override fun canRead(url: RelayUrl) = url == RelayUrl(approved.url)
+
+            override fun canWrite(url: RelayUrl) = false
+        }
 
     private class RecordingBuilder : WebsocketBuilder {
         val built = mutableListOf<NormalizedRelayUrl>()
@@ -131,5 +144,22 @@ class GatedWebsocketBuilderTest {
             }
 
         assertFalse(GatedWebsocketBuilder(notReady, policy).canConnect(approved))
+    }
+
+    @Test
+    fun `a relay approved only for reading is still dialled`() {
+        val delegate = RecordingBuilder()
+        val gate = GatedWebsocketBuilder(delegate, policy)
+
+        // The regression this guards against is someone reading the per-direction
+        // checks in QuartzRelayTransport and adding a matching one here. A socket
+        // carries both directions, so there is no direction to check at dial time;
+        // narrowing this to canWrite would leave every read-only relay unreachable.
+        assertTrue(policy.canRead(RelayUrl(approved.url)))
+        assertFalse(policy.canWrite(RelayUrl(approved.url)))
+
+        assertTrue(gate.canConnect(approved))
+        gate.build(approved, SilentListener)
+        assertEquals(listOf(approved), delegate.built)
     }
 }

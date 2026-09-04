@@ -19,6 +19,18 @@ import com.vitorpamplona.quartz.nip01Core.relay.sockets.WebsocketBuilder
  * `canConnect` returning false makes Quartz's `BasicRelayClient` skip the dial
  * entirely — no socket, no backoff growth — and [build] hands back a socket that
  * refuses to connect, so even a caller that ignores `canConnect` gets nothing.
+ *
+ * [RelayAccessPolicy.isApproved] rather than `canRead`/`canWrite`, and this is
+ * the one place where the union is the correct question. A websocket carries
+ * both directions: the same connection sends `REQ` and `EVENT`, and a relay
+ * approved for reading alone still needs a real socket to be read from. There is
+ * no direction to check at dial time, because the direction is a property of the
+ * messages and not of the connection.
+ *
+ * So this gate answers "may this app talk to this relay at all", and per-direction
+ * enforcement lives one layer up in [QuartzRelayTransport], where `publish` and
+ * the `REQ` builder each know which they are and ask accordingly. Adding a
+ * direction here would mean guessing one.
  */
 class GatedWebsocketBuilder(
     private val delegate: WebsocketBuilder,

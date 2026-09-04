@@ -145,10 +145,18 @@ Someone else's advertised list is shown on their profile as well, from the cache
 already fills — no extra fetch, and it is the thing that explains why their posts are reachable or
 guessed at.
 
-The gate is enforced twice: at routing, where `OutboxRouter` will not name an unapproved relay in
-any plan, and at the socket, where `GatedWebsocketBuilder` refuses to dial one. The second check
-never fires in normal operation — it exists because a promise enforced only by the code that
-computes relay sets is one routing bug away from being false.
+The gate is enforced three times, and each layer asks the question it is able to answer. At routing,
+where `OutboxRouter` will not name a relay in any plan unless it is approved *for that direction*.
+At the message, where `QuartzRelayTransport` checks `canWrite` before publishing and `canRead`
+before sending a `REQ` — it knows which it is doing, so it can ask the question the user actually
+answered. And at the socket, where `GatedWebsocketBuilder` refuses to dial a relay with no grant at
+all; that one cannot be direction-aware, because a websocket carries both directions and a
+read-only relay still needs a real connection to be read from.
+
+The lower two never fire in normal operation. They exist because a promise enforced only by the code
+that computes relay sets is one routing bug away from being false — and "approved" alone is a weaker
+promise than the one the buttons make, so checking only that would have left the second gate unable
+to catch the bug it is there for.
 
 Reading a relay's NIP-11 document is an HTTPS request to that relay, so it is treated as a separate
 consent: it happens only when you tap "Fetch relay info", and for a relay with no grant a dialog

@@ -37,7 +37,13 @@ import java.util.concurrent.TimeUnit
  * per relay rather than broadcast — so this class is mostly translation. The two
  * things it adds are the socket-level approval gate ([GatedWebsocketBuilder])
  * and a second filter of every relay set against the policy on the way in, so a
- * caller cannot reach an unapproved relay even by handing one to [publish].
+ * caller cannot reach a relay it has no grant for even by handing one straight
+ * to [publish].
+ *
+ * That second filter is per-direction, which the socket gate cannot be. This is
+ * the lowest layer that knows whether a relay is about to be read from or
+ * written to, so it is the last place the difference between "Get posts" and
+ * "and send mine" can still be enforced.
  */
 class QuartzRelayTransport(
     private val policy: RelayAccessPolicy,
@@ -117,7 +123,11 @@ class QuartzRelayTransport(
         relays: Set<RelayUrl>,
         timeoutSeconds: Long,
     ): Map<RelayUrl, PublishOutcome> {
-        val approved = relays.filterTo(mutableSetOf()) { policy.isApproved(it) }
+        // canWrite, not isApproved. This method knows it is sending, so it can ask
+        // the question the user actually answered: a relay approved with "Get
+        // posts" was approved for reading and for nothing else, and a caller that
+        // hands one to publish is a caller with a routing bug, not permission.
+        val approved = relays.filterTo(mutableSetOf()) { policy.canWrite(it) }
         if (approved.isEmpty()) return emptyMap()
 
         return client
@@ -129,11 +139,19 @@ class QuartzRelayTransport(
             .mapValues { PublishOutcome(accepted = it.value.accepted, message = it.value.message) }
     }
 
-    /** Drops unapproved relays and empty filter lists before anything reaches the pool. */
+    /**
+     * Drops relays not approved for reading, and empty filter lists, before
+     * anything reaches the pool.
+     *
+     * The mirror of [publish]: every plan that comes through here becomes a REQ,
+     * so the direction is known and `canRead` is the question. A write-only grant
+     * is reachable — the relay sheet toggles the two independently — and means
+     * "carry my posts, but I am not reading here".
+     */
     private fun Map<RelayUrl, List<ReqFilter>>.toQuartz(): Map<NormalizedRelayUrl, List<Filter>> =
         buildMap {
             for ((url, filters) in this@toQuartz) {
-                if (!policy.isApproved(url) || filters.isEmpty()) continue
+                if (!policy.canRead(url) || filters.isEmpty()) continue
                 put(url.toQuartz(), filters.map { it.toQuartz() })
             }
         }

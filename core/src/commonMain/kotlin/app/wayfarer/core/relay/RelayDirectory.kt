@@ -51,9 +51,9 @@ class RelayDirectory(
 
     override fun isApproved(url: RelayUrl): Boolean = state.value.grants[url]?.isApproved == true
 
-    fun canRead(url: RelayUrl): Boolean = state.value.grants[url]?.read == true
+    override fun canRead(url: RelayUrl): Boolean = state.value.grants[url]?.read == true
 
-    fun canWrite(url: RelayUrl): Boolean = state.value.grants[url]?.write == true
+    override fun canWrite(url: RelayUrl): Boolean = state.value.grants[url]?.write == true
 
     /**
      * Narrows [candidates] to the relays approved for reading, recording every
@@ -247,9 +247,30 @@ class RelayDirectory(
     }
 }
 
-/** The read side of [RelayDirectory], for components that only need the verdict. */
-fun interface RelayAccessPolicy {
+/**
+ * The read side of [RelayDirectory], for components that only need the verdict.
+ *
+ * Three questions rather than one, because the user answers three. Read and
+ * write are granted separately — "Get posts" is not "and send mine" — so a
+ * component that knows which direction it is about should be able to ask about
+ * that direction. [isApproved] is the union, and answers only "may this app
+ * talk to this relay at all"; it is the right question for opening a socket,
+ * which carries both directions, and the wrong one for deciding whether to send.
+ *
+ * Deliberately not a `fun interface` any more. A SAM lambda can only implement
+ * [isApproved], which would leave the other two to a default that agrees with it
+ * — and a default that says "yes, you may write" because the relay is readable
+ * is the exact confusion this interface now exists to prevent.
+ */
+interface RelayAccessPolicy {
+    /** Whether any connection to [url] is permitted. Read or write, either one. */
     fun isApproved(url: RelayUrl): Boolean
+
+    /** Whether [url] may be asked for events. */
+    fun canRead(url: RelayUrl): Boolean
+
+    /** Whether events may be sent to [url]. */
+    fun canWrite(url: RelayUrl): Boolean
 }
 
 /**
