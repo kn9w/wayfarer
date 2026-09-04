@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import java.io.File
 
 /**
  * Composition root. Three lines of wiring and one `await`.
@@ -64,7 +65,14 @@ class WayfarerApplication : Application() {
     private val deferredImages by lazy {
         scope.async {
             val core = deferred.await()
-            ImageLoader(ImageLoader.client(core.mediaDirectory, cacheDir))
+            ImageLoader(
+                client = ImageLoader.client(core.mediaDirectory, cacheDir),
+                // Its own directory rather than OkHttp's response cache: a video
+                // is orders of magnitude larger than an avatar, and one of them
+                // would evict every picture in a cache sized for pictures. Also
+                // what lets logging out delete the videos on their own.
+                videoDir = File(cacheDir, "video"),
+            )
         }
     }
 

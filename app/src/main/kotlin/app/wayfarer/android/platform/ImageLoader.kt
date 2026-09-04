@@ -9,6 +9,7 @@ import app.wayfarer.core.model.MediaHost
 import app.wayfarer.core.relay.MediaAccessPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,6 +17,7 @@ import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -162,9 +164,10 @@ class GatedImageRequests(
  * an oversight. An image loader is exactly the kind of component that owns its
  * own HTTP client, its own prefetch and its own disk layer — every one of them a
  * place a request could originate that the gate above never sees. This one takes
- * the client it is given, and the only network call in the file is the one in
- * [load]. That makes "nothing is fetched from an unapproved host" a claim a
- * reader can check by reading one page.
+ * the client it is given, and the only two network calls in the file are the one
+ * in [load] and the one in [download], which share it. That makes "nothing is
+ * fetched from an unapproved host" a claim a reader can check by reading one
+ * page.
  *
  * The cost is real and worth naming: no animated GIF or WebP, no transformations
  * beyond a downscale, and no cross-fade. For avatars and banners that is enough.
@@ -172,6 +175,13 @@ class GatedImageRequests(
 class ImageLoader(
     private val client: OkHttpClient,
     maxCacheBytes: Int = defaultCacheBytes(),
+    /**
+     * Where a video is put so the platform can play it from disk.
+     *
+     * Null disables video entirely, and the viewer says so rather than falling
+     * back to streaming — see [video] for why there is no fallback.
+     */
+    private val videoDir: File? = null,
 ) {
     private val cache =
         object : LruCache<String, ImageBitmap>(maxCacheBytes) {
@@ -206,6 +216,112 @@ class ImageLoader(
     }
 
     /**
+     * A local copy of a video, downloaded through the gated client, or null if
+     * it could not be had.
+     *
+     * This exists because handing a remote URL to the platform's `VideoView` is
+     * a hole in the media gate, and a large one. `MediaPlayer` does its own
+     * networking: it never passes through [GatedImageRequests], so the
+     * interceptor that is deliberately registered twice — once so the disk
+     * cache cannot route around it, once so a *redirect* cannot — sees nothing
+     * at all. The gate was reduced to the composable that decides whether to
+     * draw a play button, which is exactly the single-layer arrangement the
+     * rest of this app refuses to rely on. Worse, `MediaPlayer` follows
+     * redirects on its own, so an allowed host could bounce the request, and
+     * the user's IP address, to anyone it liked — the very thing the NIP-11
+     * fetcher turns redirects off to prevent.
+     *
+     * So the bytes are fetched here, by the same client and through the same
+     * gate as every picture, and the player is handed a file. It is not a
+     * streaming player any more and it is not meant to be: the whole video is
+     * read before anything plays, and one too large to hold is refused rather
+     * than partially played. That is the honest trade for an app whose promise
+     * is that nothing is fetched from a server the user has not allowed.
+     */
+    suspend fun video(url: String): File? {
+        val dir = videoDir ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                dir.mkdirs()
+                val target = File(dir, cacheName(url))
+                if (target.isFile && target.length() > 0) return@runCatching target
+                if (download(url, target)) target else null
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Streams [url] to [target], refusing anything over [MAX_VIDEO_BYTES].
+     *
+     * Written through a `.part` file and renamed, so an interrupted download can
+     * never be picked up as a complete one by the next tap. The size is checked
+     * as the bytes arrive rather than only against `Content-Length`, because a
+     * header is a claim and this is the number that has to be true.
+     */
+    private fun download(
+        url: String,
+        target: File,
+    ): Boolean {
+        val request =
+            Request
+                .Builder()
+                .url(url)
+                // Not through OkHttp's response cache: that one is sized for
+                // avatars, and a single video would evict every picture in it.
+                .cacheControl(CacheControl.Builder().noStore().build())
+                .build()
+
+        videoClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return false
+            if (response.body.contentLength() > MAX_VIDEO_BYTES) return false
+
+            val partial = File(target.absolutePath + ".part")
+            try {
+                var written = 0L
+                response.body.byteStream().use { input ->
+                    partial.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            written += read
+                            if (written > MAX_VIDEO_BYTES) return false
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+                return written > 0 && partial.renameTo(target)
+            } finally {
+                // A no-op after a successful rename; the cleanup that matters is
+                // the failure path, which must not leave a stub behind.
+                partial.delete()
+            }
+        }
+    }
+
+    /**
+     * The same gate and the same connection pool, with room to finish.
+     *
+     * `newBuilder` carries both interceptors across — that is the whole point of
+     * deriving it rather than building a second client — while lifting the read
+     * timeout, which is set for a small picture and is too tight for a file that
+     * takes a while to arrive.
+     */
+    private val videoClient: OkHttpClient by lazy {
+        client
+            .newBuilder()
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** A filesystem-safe, collision-free name for a URL. */
+    private fun cacheName(url: String): String =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+
+    /**
      * Throws away every picture held, in memory and on disk.
      *
      * Called when an account logs out. The pictures a session drew are the
@@ -227,6 +343,11 @@ class ImageLoader(
             // not clear is not worth taking the app down over — nothing is
             // served from it that the gate would not also allow.
             runCatching { client.cache?.evictAll() }
+            // Downloaded videos are the same kind of trace as the pictures, and
+            // a much heavier one: a file per video the departing account chose
+            // to watch, sitting in the cache directory under a name derived from
+            // its URL.
+            runCatching { videoDir?.listFiles()?.forEach { it.delete() } }
         }
     }
 
@@ -292,6 +413,17 @@ class ImageLoader(
          * real photograph.
          */
         private const val MAX_IMAGE_BYTES = 8L * 1024 * 1024
+
+        /**
+         * The most this will download for one video.
+         *
+         * Bounded for the same reason as a picture, and the number is larger
+         * because the thing is: enough for the short clips people actually post
+         * inline, and far short of a file that would fill a phone. Anything over
+         * is refused outright and named as too large, rather than played from a
+         * stream this app cannot gate.
+         */
+        private const val MAX_VIDEO_BYTES = 64L * 1024 * 1024
 
         /** An eighth of the heap, the conventional share for a bitmap cache. */
         fun defaultCacheBytes(): Int = (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()

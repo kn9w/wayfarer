@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,6 +41,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.wayfarer.android.ui.icons.WayfarerIcons
+import java.io.File
 
 /**
  * One picture or video, filling the window.
@@ -49,11 +51,16 @@ import app.wayfarer.android.ui.icons.WayfarerIcons
  * is that: the same bitmap, at the size the screen can show, pinch-zoomable to
  * six times its fitted size, pannable while zoomed, and double-tap to go back.
  *
- * The gate is unchanged and unweakened. This composable is only ever reached
- * from a picture that was already being drawn, which means its host is
- * [app.wayfarer.android.viewmodel.MediaApproval.Allowed]; the fetch still goes
- * through `ImageLoader`, so `GatedImageRequests` still sees it. Nothing here can
- * open a connection the small version could not.
+ * The gate is unchanged and unweakened, and for video it is now stronger than it
+ * was. This composable is only ever reached from media that was already being
+ * drawn, which means its host is
+ * [app.wayfarer.android.viewmodel.MediaApproval.Allowed]; both branches fetch
+ * through `ImageLoader`, so `GatedImageRequests` sees every request. Nothing
+ * here can open a connection the small version could not.
+ *
+ * That last sentence used to be false of the video branch, which handed the URL
+ * straight to `MediaPlayer` and so left the interceptor out of the path
+ * entirely. See [VideoSurface].
  */
 @Composable
 fun MediaViewer(
@@ -166,62 +173,120 @@ private fun ZoomableImage(url: String) {
 }
 
 /**
- * A video, played full-window by the platform.
+ * A video, downloaded through the media gate and then played from disk.
  *
- * `VideoView` rather than a player library: the app carries no media
- * dependency, and the framework's own view is a decode surface that already
- * exists on every device this runs on. The trade is real — no adaptive
- * streaming, and the fetch is `MediaPlayer`'s rather than the gated OkHttp
- * client's — so this is only ever composed for a host the user has already
- * allowed in Pictures, and a video from an undecided host still shows the badge
- * that leads to that decision instead.
+ * The download is the point. `VideoView` is the platform's own decode surface
+ * and costs no dependency, but handing it a remote URL hands the fetch to
+ * `MediaPlayer`, which does its own networking: nothing about that request
+ * passes through `GatedImageRequests`, so the interceptor registered twice —
+ * once so the disk cache cannot route around it, once so a redirect cannot —
+ * never ran at all. The gate for video was the composable that decides whether
+ * to draw a play button and nothing else, which is precisely the one-layer
+ * arrangement the rest of this app is written to refuse. And `MediaPlayer`
+ * follows redirects on its own, so an allowed host could send the request, and
+ * the reader's IP address, anywhere it chose.
+ *
+ * So [ImageLoader.video] fetches the bytes through the same client and the same
+ * gate as every picture, and this hands the player a local file. The trade is
+ * named rather than hidden: nothing plays until the whole file has arrived, and
+ * a video too large to hold is refused instead of streamed.
  */
 @Composable
 private fun VideoSurface(url: String) {
-    var failed by remember(url) { mutableStateOf(false) }
+    val loader = LocalImageLoader.current
 
-    if (failed) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(24.dp),
-            ) {
-                Text(
-                    "This video could not be played on this device.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
-                )
-                Text(
-                    "Wayfarer plays what Android itself can decode, and nothing else.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xB3FFFFFF),
-                )
-            }
-        }
-        return
+    // Loading until the fetch answers. Keyed on the URL and the loader, so
+    // opening a different video starts a different download.
+    val local by produceState<VideoSource>(initialValue = VideoSource.Fetching, url, loader) {
+        value = loader?.video(url)?.let(VideoSource::Ready) ?: VideoSource.Unavailable
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { context ->
-            VideoView(context).apply {
-                setMediaController(VideoControls(context).also { it.setAnchorView(this) })
-                setOnPreparedListener { start() }
-                setOnErrorListener { _, _, _ ->
-                    failed = true
-                    // Handled: returning false lets the framework put its own
-                    // dialog up, over a dialog of ours.
-                    true
-                }
-                setVideoURI(Uri.parse(url))
+    var failed by remember(url) { mutableStateOf(false) }
+
+    when {
+        failed ->
+            VideoMessage(
+                "This video could not be played on this device.",
+                "Wayfarer plays what Android itself can decode, and nothing else.",
+            )
+
+        local is VideoSource.Fetching ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color.White)
             }
-        },
-        // Stopped rather than left to the garbage collector: a dismissed dialog
-        // whose MediaPlayer is still holding the audio focus and the socket is
-        // the one way a media view leaks past its own screen.
-        onRelease = { it.stopPlayback() },
-    )
+
+        local is VideoSource.Unavailable ->
+            VideoMessage(
+                "This video could not be fetched.",
+                "It may be too large to hold, or the server did not answer. Wayfarer downloads a video " +
+                    "before playing it, so that the request goes through the same picture-server " +
+                    "permission as everything else.",
+            )
+
+        else ->
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    VideoView(context).apply {
+                        setMediaController(VideoControls(context).also { it.setAnchorView(this) })
+                        setOnPreparedListener { start() }
+                        setOnErrorListener { _, _, _ ->
+                            failed = true
+                            // Handled: returning false lets the framework put its
+                            // own dialog up, over a dialog of ours.
+                            true
+                        }
+                        // A local file. The player opens no socket, which is what
+                        // keeps this inside the gate.
+                        setVideoURI(Uri.fromFile((local as VideoSource.Ready).file))
+                    }
+                },
+                // Stopped rather than left to the garbage collector: a dismissed
+                // dialog whose MediaPlayer is still holding the audio focus is the
+                // one way a media view leaks past its own screen.
+                onRelease = { it.stopPlayback() },
+            )
+    }
+}
+
+/** Where the bytes for a video are, if anywhere. */
+private sealed interface VideoSource {
+    /** The gated download is still running. */
+    data object Fetching : VideoSource
+
+    /** Downloaded and on disk, ready for the player. */
+    data class Ready(
+        val file: File,
+    ) : VideoSource
+
+    /** Refused, too large, or no loader attached to fetch with. */
+    data object Unavailable : VideoSource
+}
+
+/** Two lines centred on the black, for a video that is not going to play. */
+@Composable
+private fun VideoMessage(
+    headline: String,
+    detail: String,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(24.dp),
+        ) {
+            Text(
+                headline,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White,
+            )
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xB3FFFFFF),
+            )
+        }
+    }
 }
 
 /** A small play triangle over a still, for a video that has not been opened yet. */
