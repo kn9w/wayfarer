@@ -10,6 +10,8 @@ import app.wayfarer.core.nostr.NostrCodec
 import app.wayfarer.core.nostr.RelayTransport
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.util.Clock
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -85,7 +87,7 @@ class PaymentRepository(
 
         val parsed = PaymentTarget.fromEvent(event)
         publishedAt[event.pubKey] = event.createdAt
-        state.value = state.value + (event.pubKey to parsed)
+        state.value = state.value.plusBounded(event.pubKey, parsed, StoreLimits.PAYMENT_TARGETS)
         return parsed
     }
 

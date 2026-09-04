@@ -4,6 +4,7 @@ import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.RelayInfo
 import app.wayfarer.core.nostr.RelayInfoFetcher
 import app.wayfarer.core.relay.RelayInfoService
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -106,4 +107,40 @@ class RelayInfoServiceTest {
 
             assertEquals(null, service[url])
         }
+
+    /**
+     * A relay that accepts the connection and then says nothing must not be able
+     * to wedge its own entry on [RelayInfoService.Entry.Loading] forever.
+     *
+     * The dedupe guard returns the existing entry when one is already loading, so
+     * before the timeout existed a single unanswered fetch made that relay's
+     * information permanently unreadable for the rest of the session — with no
+     * error, no retry and a spinner that never stopped.
+     */
+    @Test
+    fun `a relay that never answers times out and can be asked again`() =
+        runTest {
+            val fetcher = HangingFetcher()
+            val service = RelayInfoService(fetcher)
+
+            val result = service.fetchOnUserRequest(url)
+
+            assertTrue(result is RelayInfoService.Entry.Failed, "expected a failure, got $result")
+            assertEquals(1, fetcher.calls)
+
+            // The entry is no longer Loading, so the guard lets a retry through.
+            val retry = service.fetchOnUserRequest(url)
+            assertTrue(retry is RelayInfoService.Entry.Failed)
+            assertEquals(2, fetcher.calls, "a timed-out relay must be askable again")
+        }
+
+    /** Never returns, never throws — the shape of a relay holding the socket open. */
+    private class HangingFetcher : RelayInfoFetcher {
+        var calls = 0
+
+        override suspend fun fetch(url: RelayUrl): RelayInfo {
+            calls++
+            awaitCancellation()
+        }
+    }
 }

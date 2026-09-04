@@ -43,20 +43,38 @@ class DeviceAuthBridge(
     }
 
     /**
-     * Returns [DeviceAuthOutcome.UNAVAILABLE] when there is no screen lock to ask
-     * with — which is a fact about the device the user is told, not a refusal.
-     * Refusing outright would lock somebody out of their own key because they
-     * never set a PIN.
+     * Two ways of not getting an answer, and they are not the same thing.
+     *
+     * [DeviceAuthOutcome.NO_LOCK_SET] is a fact about the device: there is no
+     * screen lock, so there is nothing to ask with. The caller shows the key
+     * anyway and names the gap, because refusing would lock somebody out of
+     * their own key over a setting they chose.
+     *
+     * [DeviceAuthOutcome.FAILED] is everything else — the keyguard service
+     * missing, the system declining to build the intent, nothing able to handle
+     * it. A device that has a lock screen and could not show it has not
+     * confirmed anything, and must not be treated as though it had. These two
+     * shared a value once, and the effect was that any error revealed the key.
      */
     suspend fun confirm(
         title: String,
         description: String,
     ): DeviceAuthOutcome {
-        val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (keyguard == null || !keyguard.isDeviceSecure) return DeviceAuthOutcome.UNAVAILABLE
+        val keyguard =
+            context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                // The service is always present on a real device; its absence is a
+                // broken platform, not an unlocked one.
+                ?: return DeviceAuthOutcome.FAILED
+
+        if (!keyguard.isDeviceSecure) return DeviceAuthOutcome.NO_LOCK_SET
 
         @Suppress("DEPRECATION")
-        val intent = keyguard.createConfirmDeviceCredentialIntent(title, description) ?: return DeviceAuthOutcome.UNAVAILABLE
+        val intent =
+            keyguard.createConfirmDeviceCredentialIntent(title, description)
+                // isDeviceSecure said there is a credential, so this returning
+                // null contradicts the line above rather than describing a phone
+                // without a PIN.
+                ?: return DeviceAuthOutcome.FAILED
 
         return lock.withLock {
             val slot = CompletableDeferred<Boolean>()
@@ -65,9 +83,9 @@ class DeviceAuthBridge(
                 launcher.launch(intent)
                 if (slot.await()) DeviceAuthOutcome.CONFIRMED else DeviceAuthOutcome.REJECTED
             } catch (failure: Throwable) {
-                // Nothing could handle the intent. Treated as "could not ask" rather
-                // than "was refused", so the caller can say which happened.
-                DeviceAuthOutcome.UNAVAILABLE
+                // Nothing could handle the intent. Not a refusal, and not
+                // permission either.
+                DeviceAuthOutcome.FAILED
             } finally {
                 pending = null
             }

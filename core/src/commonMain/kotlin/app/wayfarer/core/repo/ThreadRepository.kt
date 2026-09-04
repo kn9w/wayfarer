@@ -1,12 +1,12 @@
 package app.wayfarer.core.repo
 
 import app.wayfarer.core.model.Comment
-import app.wayfarer.core.model.EventId
-import app.wayfarer.core.model.EventKind
-import app.wayfarer.core.model.Note
-import app.wayfarer.core.model.NostrEvent
 import app.wayfarer.core.model.DiscoveryReason
 import app.wayfarer.core.model.DiscoverySource
+import app.wayfarer.core.model.EventId
+import app.wayfarer.core.model.EventKind
+import app.wayfarer.core.model.NostrEvent
+import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.model.ThreadRef
@@ -18,6 +18,8 @@ import app.wayfarer.core.nostr.ReqFilter
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.util.Clock
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -159,7 +161,7 @@ class ThreadRepository(
         events?.put(event)
         val existing = roots.value[note.id]
         val merged = existing?.mergeSeenOn(note.seenOn) ?: note
-        if (merged !== existing) roots.value = roots.value + (merged.id to merged)
+        if (merged !== existing) roots.value = roots.value.plusBounded(merged.id, merged, StoreLimits.THREAD_ENTRIES)
         return existing == null
     }
 
@@ -225,7 +227,7 @@ class ThreadRepository(
             events?.put(event)
             val existing = comments.value[incoming.id]
             val merged = existing?.mergeSeenOn(incoming.seenOn) ?: incoming
-            if (merged !== existing) comments.value = comments.value + (merged.id to merged)
+            if (merged !== existing) comments.value = comments.value.plusBounded(merged.id, merged, StoreLimits.THREAD_ENTRIES)
             return true
         }
 
@@ -235,7 +237,7 @@ class ThreadRepository(
         events?.put(event)
         val existing = replies.value[reply.id]
         val merged = existing?.mergeSeenOn(reply.seenOn) ?: reply
-        if (merged !== existing) replies.value = replies.value + (merged.id to merged)
+        if (merged !== existing) replies.value = replies.value.plusBounded(merged.id, merged, StoreLimits.THREAD_ENTRIES)
         return true
     }
 

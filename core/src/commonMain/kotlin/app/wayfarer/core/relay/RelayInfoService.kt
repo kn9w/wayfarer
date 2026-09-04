@@ -3,9 +3,14 @@ package app.wayfarer.core.relay
 import app.wayfarer.core.model.RelayUrl
 import app.wayfarer.core.nostr.RelayInfo
 import app.wayfarer.core.nostr.RelayInfoFetcher
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * NIP-11 relay information, fetched only when the user explicitly asks for it.
@@ -59,19 +64,45 @@ class RelayInfoService(
         if (!force && existing is Entry.Loaded) return existing
         if (existing is Entry.Loading) return existing
 
-        state.value = state.value + (url to Entry.Loading)
+        state.value = state.value.plusBounded(url, Entry.Loading, StoreLimits.RELAY_INFO)
         val result =
             try {
-                Entry.Loaded(fetcher.fetch(url))
+                // A relay that accepts the connection and then says nothing must
+                // not be able to hold this entry on [Entry.Loading] for the rest
+                // of the session — the guard above would then refuse every retry,
+                // and the button that reads this relay's document would be dead
+                // until the app restarted. The transport has its own timeouts;
+                // this is the one that bounds the whole operation regardless of
+                // where it stalled.
+                withTimeout(TIMEOUT_MS) { Entry.Loaded(fetcher.fetch(url)) }
+            } catch (timeout: TimeoutCancellationException) {
+                Entry.Failed("This relay did not answer in time.")
+            } catch (cancelled: CancellationException) {
+                // The caller went away — the screen was closed, or the account
+                // switched. Leave nothing behind claiming to be in flight, or
+                // this relay becomes unreadable for the rest of the session.
+                state.value = state.value - url
+                throw cancelled
             } catch (failure: Throwable) {
                 Entry.Failed(failure.message ?: "Could not read this relay's information document")
             }
-        state.value = state.value + (url to result)
+        state.value = state.value.plusBounded(url, result, StoreLimits.RELAY_INFO)
         return result
     }
 
     /** Drops what is known about [url] — used when a relay is forgotten. */
     fun clear(url: RelayUrl) {
         state.value = state.value - url
+    }
+
+    private companion object {
+        /**
+         * How long a relay gets to hand over its information document.
+         *
+         * Generous for a small JSON file over one HTTPS request, and short
+         * enough that somebody who pressed a button gets an answer rather than
+         * a spinner they have to guess about.
+         */
+        const val TIMEOUT_MS = 15_000L
     }
 }

@@ -1,10 +1,10 @@
 package app.wayfarer.core.repo
 
+import app.wayfarer.core.model.DiscoveryReason
+import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.EventKind
 import app.wayfarer.core.model.NostrEvent
-import app.wayfarer.core.model.DiscoveryReason
-import app.wayfarer.core.model.DiscoverySource
 import app.wayfarer.core.model.Note
 import app.wayfarer.core.model.PubKey
 import app.wayfarer.core.model.RelayUrl
@@ -15,6 +15,8 @@ import app.wayfarer.core.nostr.RelayTransport
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.relay.RelayHintQueue
 import app.wayfarer.core.util.Clock
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -229,7 +231,7 @@ class FeedRepository(
         val existing = notes.value[incoming.id]
         val merged = existing?.mergeSeenOn(incoming.seenOn) ?: incoming
         if (merged === existing) return existing
-        notes.value = notes.value + (merged.id to merged)
+        notes.value = notes.value.plusBounded(merged.id, merged, StoreLimits.NOTES)
         return merged
     }
 

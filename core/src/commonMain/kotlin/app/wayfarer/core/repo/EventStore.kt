@@ -2,6 +2,8 @@ package app.wayfarer.core.repo
 
 import app.wayfarer.core.model.EventId
 import app.wayfarer.core.model.NostrEvent
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +19,14 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * One store shared by every repository rather than a raw field on each model, so
  * that adding it costs no change to the models or to anything constructing them,
- * and so there is a single place to bound it if a long session ever needs that.
+ * and so there is a single place to bound it.
+ *
+ * It is bounded, at [StoreLimits.EVENTS], oldest first. A live subscription is
+ * something a relay pushes at for as long as the app is open, so an unbounded
+ * store here was a relay's decision about how much of this device's memory to
+ * use. See [app.wayfarer.core.util.plusBounded] for what eviction costs — the
+ * short version is that nothing on screen is holding this map, so dropping an
+ * old entry is at worst a re-fetch.
  *
  * Re-offering an event is a no-op. An id is the hash of its own event and absorb
  * verifies before storing, so a second copy is always byte-identical and there is
@@ -40,7 +49,7 @@ class EventStore {
 
     fun put(event: NostrEvent) {
         if (event.id in events.value) return
-        events.value = events.value + (event.id to event)
+        events.value = events.value.plusBounded(event.id, event, StoreLimits.EVENTS)
     }
 
     val size: Int get() = events.value.size

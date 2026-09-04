@@ -11,6 +11,8 @@ import app.wayfarer.core.nostr.NostrCodec
 import app.wayfarer.core.nostr.RelayTransport
 import app.wayfarer.core.outbox.OutboxRouter
 import app.wayfarer.core.util.Clock
+import app.wayfarer.core.util.StoreLimits
+import app.wayfarer.core.util.plusBounded
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -96,11 +98,11 @@ class ArticleRepository(
         if (existing != null && existing.createdAt == withRelay.createdAt) {
             val merged = existing.mergeSeenOn(withRelay.seenOn)
             if (merged === existing) return existing
-            articles.value = articles.value + (merged.address to merged)
+            articles.value = articles.value.plusBounded(merged.address, merged, StoreLimits.ARTICLES)
             return merged
         }
 
-        articles.value = articles.value + (withRelay.address to withRelay)
+        articles.value = articles.value.plusBounded(withRelay.address, withRelay, StoreLimits.ARTICLES)
         return withRelay
     }
 
