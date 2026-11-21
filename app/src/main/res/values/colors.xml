@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors WayfarerTheme's `background`. Only the window uses these; every
+         other colour in the app comes from the Compose colour scheme. -->
+    <color name="window_background">#FBF9F4</color>
+</resources>

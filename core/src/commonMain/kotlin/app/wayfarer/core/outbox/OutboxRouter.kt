@@ -1,0 +1,323 @@
+package app.wayfarer.core.outbox
+
+import app.wayfarer.core.model.DiscoveryReason
+import app.wayfarer.core.model.DiscoverySource
+import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.model.RelayUrl
+import app.wayfarer.core.nostr.ReqFilter
+import app.wayfarer.core.relay.RelayDirectory
+
+/**
+ * Tunables for outbox routing. The defaults are conservative on purpose: this
+ * app opens few sockets and asks each relay only for what it is the right source
+ * for.
+ */
+data class OutboxConfig(
+    /** Relays per author when reading their notes. */
+    val readRedundancy: Int = 2,
+    /** Ceiling on relays in a single read plan. */
+    val maxReadRelays: Int = 12,
+    /** Own write relays used when publishing. */
+    val maxOwnWriteRelays: Int = 6,
+    /** Inbox relays used per mentioned user when publishing. */
+    val inboxRelaysPerMention: Int = 2,
+    /** Ceiling on relays a single publish fans out to. */
+    val maxPublishRelays: Int = 20,
+    /**
+     * Relays a discovery query may be spread across.
+     *
+     * Discovery is the one read with no author routing to narrow it — it is
+     * asked precisely because nothing is known yet about where these authors
+     * publish — so without a ceiling it reaches every approved read relay. See
+     * [OutboxRouter.discoveryPlanFor].
+     */
+    val maxDiscoveryRelays: Int = 4,
+    /** How many discovery relays are asked about any one author. */
+    val discoveryRedundancy: Int = 2,
+    /**
+     * What to do about an author who has published no kind 10002 at all.
+     *
+     * Strictly, the outbox model has no answer: without a relay list there is no
+     * claim about where that author publishes. Answering "nowhere" would hide a
+     * large share of nostr, since plenty of accounts have never published one, so
+     * the default is to fall back to the relays the user approved for reading and
+     * say so in the UI. Set false for strict behaviour: no relay list, no fetch.
+     */
+    val fallbackToApprovedReadRelays: Boolean = true,
+)
+
+/**
+ * Turns "which authors do I want?" into "which relay do I ask for which authors?".
+ *
+ * Every relay set produced here has already been through [RelayDirectory], so a
+ * plan can only ever name approved relays; relays that were wanted but are not
+ * approved are recorded as pending with the reason they were wanted, which is
+ * what fills the approval queue in settings.
+ */
+class OutboxRouter(
+    private val relayLists: RelayListCache,
+    private val directory: RelayDirectory,
+    private val config: OutboxConfig = OutboxConfig(),
+    /**
+     * Names a pubkey for the reason strings shown on the relay screen.
+     *
+     * Injected rather than calling [PubKey.abbreviated], which is hex: these
+     * strings are read by a person deciding whether to allow a relay, and a
+     * truncated hex key tells them nothing they can recognise. Defaults to hex
+     * only so tests and non-UI callers need not supply a bech32 codec.
+     */
+    private val describe: (PubKey) -> String = { it.abbreviated() },
+) {
+    data class ReadPlan(
+        val plan: Map<RelayUrl, List<ReqFilter>>,
+        /** Authors that no approved relay serves — usually pending approvals. */
+        val unreachable: Set<PubKey>,
+        /**
+         * Authors with no kind 10002, fetched from the approved read relays as a
+         * guess. Surfaced so the UI can be honest that these are not outbox-routed.
+         */
+        val guessed: Set<PubKey> = emptySet(),
+    ) {
+        val isEmpty: Boolean get() = plan.isEmpty()
+    }
+
+    data class PublishPlan(
+        val relays: Set<RelayUrl>,
+        /** Own write relays. Empty means the note cannot be published at all. */
+        val ownWrite: Set<RelayUrl>,
+        /** Inbox relays added so the mentioned users actually receive it. */
+        val mentionInbox: Set<RelayUrl>,
+    ) {
+        val isEmpty: Boolean get() = relays.isEmpty()
+    }
+
+    /**
+     * Where to read [authors]' own events: each author's advertised *write*
+     * relays. This is the outbox model's core claim — an author's content lives
+     * where the author put it, not on whatever relay we happen to like.
+     */
+    suspend fun readPlanFor(
+        authors: Set<PubKey>,
+        kinds: List<Int>,
+        limitPerRelay: Int? = null,
+        since: Long? = null,
+        /**
+         * Only events older than this, for paging backwards through somebody's
+         * posts. A relay answers a limit with its *newest* events, so "show me
+         * more" is a query for what came before the oldest post already held —
+         * not a bigger limit on the same query, which asks the same relay for
+         * the same events again.
+         */
+        until: Long? = null,
+        connected: Set<RelayUrl> = emptySet(),
+    ): ReadPlan {
+        if (authors.isEmpty()) return ReadPlan(emptyMap(), emptySet())
+
+        val fallback = if (config.fallbackToApprovedReadRelays) approvedReadRelays().toList() else emptyList()
+
+        val candidates = mutableMapOf<PubKey, List<RelayUrl>>()
+        val guessed = mutableSetOf<PubKey>()
+        for (author in authors) {
+            val advertised = relayLists[author]?.outbox.orEmpty()
+            candidates[author] =
+                if (advertised.isEmpty()) {
+                    // No relay list to route by. Either guess, or report the author
+                    // as unreachable — never quietly broadcast to every relay.
+                    guessed += author
+                    fallback
+                } else {
+                    directory
+                        .readable(
+                            advertised,
+                            DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "write relay of ${describe(author)}"),
+                        ).toList()
+                }
+        }
+
+        val selection =
+            RelayCoverage.select(
+                candidatesByAuthor = candidates,
+                redundancy = config.readRedundancy,
+                maxRelays = config.maxReadRelays,
+                preferred = connected,
+            )
+
+        val plan =
+            selection.assignments.mapValues { (_, assigned) ->
+                listOf(
+                    ReqFilter(
+                        authors = assigned.map { it.hex }.sorted(),
+                        kinds = kinds,
+                        since = since,
+                        until = until,
+                        limit = limitPerRelay,
+                    ),
+                )
+            }
+
+        return ReadPlan(plan, selection.uncovered, guessed - selection.uncovered)
+    }
+
+    /**
+     * Where a note by [author] mentioning [mentions] must go.
+     *
+     * NIP-65: publish to your own write relays so your followers (who read your
+     * outbox) find it, *and* to each mentioned user's read relays so the mention
+     * actually lands in their inbox. Skipping the second half is the single most
+     * common way clients silently break mentions.
+     */
+    suspend fun publishPlanFor(
+        author: PubKey,
+        mentions: Set<PubKey> = emptySet(),
+    ): PublishPlan {
+        val ownWrite =
+            directory
+                .writable(
+                    relayLists[author]?.outbox.orEmpty(),
+                    DiscoveryReason(DiscoverySource.OWN_RELAY_LIST, "your write relay"),
+                ).take(config.maxOwnWriteRelays)
+                .toSet()
+                .ifEmpty {
+                    // No usable kind 10002 yet (fresh account, or none approved).
+                    // Fall back to everything the user approved for writing, so a
+                    // first post is possible before the relay list exists.
+                    directory.grants.values.filter { it.write }.map { it.url }.take(config.maxOwnWriteRelays).toSet()
+                }
+
+        val inbox = mutableSetOf<RelayUrl>()
+        for (mentioned in mentions) {
+            if (mentioned == author) continue
+            val theirInbox = relayLists[mentioned]?.inbox.orEmpty()
+            if (theirInbox.isEmpty()) continue
+            inbox +=
+                directory
+                    .writable(
+                        theirInbox,
+                        DiscoveryReason(DiscoverySource.AUTHOR_RELAY_LIST, "inbox relay of ${describe(mentioned)}"),
+                    ).take(config.inboxRelaysPerMention)
+        }
+
+        val all = (ownWrite + inbox).take(config.maxPublishRelays).toSet()
+        return PublishPlan(relays = all, ownWrite = ownWrite, mentionInbox = inbox - ownWrite)
+    }
+
+    /**
+     * Where mentions of [me] arrive: my own advertised read relays. Falls back to
+     * everything approved for reading before a relay list exists.
+     */
+    suspend fun inboxPlanFor(
+        me: PubKey,
+        kinds: List<Int>,
+        limitPerRelay: Int? = null,
+    ): Map<RelayUrl, List<ReqFilter>> {
+        val relays =
+            directory
+                .readable(
+                    relayLists[me]?.inbox.orEmpty(),
+                    DiscoveryReason(DiscoverySource.OWN_RELAY_LIST, "your read relay"),
+                ).ifEmpty { approvedReadRelays() }
+
+        val filter = ReqFilter(kinds = kinds, tags = mapOf("p" to listOf(me.hex)), limit = limitPerRelay)
+        return relays.associateWith { listOf(filter) }
+    }
+
+    /**
+     * Asks named relays directly, for the one case the outbox model has no
+     * opinion about: the user has pointed at a relay and wants to see what is on
+     * it.
+     *
+     * Not a hole in the routing rules — it is still the directory that decides
+     * whether each relay may be read, and the plan can only ever name relays the
+     * user approved. What it skips is the *author* half: there is no author to
+     * route by, which is exactly why the UI has to label this as browsing one
+     * relay rather than as a routed feed.
+     */
+    suspend fun relayPlanFor(
+        relays: Collection<RelayUrl>,
+        kinds: List<Int>,
+        limitPerRelay: Int? = null,
+        since: Long? = null,
+        /** NIP-01 tag filters, e.g. `#e` for the replies to one event. */
+        tags: Map<String, List<String>>? = null,
+        reason: DiscoveryReason = DiscoveryReason(DiscoverySource.USER_ENTERED, "you asked to browse it"),
+    ): Map<RelayUrl, List<ReqFilter>> {
+        val allowed = directory.readable(relays, reason)
+        if (allowed.isEmpty()) return emptyMap()
+        val filter = ReqFilter(kinds = kinds, tags = tags, since = since, limit = limitPerRelay)
+        return allowed.associateWith { listOf(filter) }
+    }
+
+    /**
+     * A plan carrying several filters per relay.
+     *
+     * NIP-01 ANDs the conditions inside one filter and ORs separate filters, so
+     * anything that means "either of these shapes" — a conversation, which is
+     * NIP-22 comments *or* NIP-10 replies — has to be several filters. Folding
+     * them into one filter with two tag conditions asks for events carrying
+     * both, which almost nothing is.
+     */
+    suspend fun planFor(
+        relays: Collection<RelayUrl>,
+        filters: List<ReqFilter>,
+        reason: DiscoveryReason,
+    ): Map<RelayUrl, List<ReqFilter>> {
+        if (filters.isEmpty()) return emptyMap()
+        val allowed = directory.readable(relays, reason)
+        if (allowed.isEmpty()) return emptyMap()
+        return allowed.associateWith { filters }
+    }
+
+    /**
+     * Where to look for things we cannot route yet — an author's kind 10002 and
+     * kind 0 when we have never seen either. Uses every approved read relay,
+     * because by definition there is no better-informed choice available.
+     */
+    fun discoveryRelays(): Set<RelayUrl> = approvedReadRelays()
+
+    private fun approvedReadRelays(): Set<RelayUrl> = directory.grants.values.filter { it.read }.mapTo(mutableSetOf()) { it.url }
+
+    /**
+     * A discovery plan for the relay lists and profiles of [authors].
+     *
+     * Sharded, and that is the point of it. The obvious implementation sends one
+     * filter naming every author to every approved read relay, which hands each
+     * of them the reader's whole follow list — the exact disclosure the outbox
+     * model avoids everywhere else, arriving through the back door of the query
+     * that bootstraps it, at every launch. A relay learns little from being asked
+     * about an author it serves. It learns a great deal from being asked about
+     * all of them at once.
+     *
+     * So authors are dealt round-robin across a capped, deterministically ordered
+     * slice of the approved read relays, [OutboxConfig.discoveryRedundancy] relays
+     * each, and every author is still asked of two independent relays. At the
+     * default cap of four that is half the list per relay, two thirds at three,
+     * and no gain at all below that — which is the shape of the problem rather
+     * than a shortcoming: somebody who has approved one relay has one relay to
+     * ask.
+     *
+     * Deterministic rather than shuffled. A fresh partition on every refresh
+     * would, over a handful of them, tell every relay everything anyway.
+     */
+    fun discoveryPlanFor(
+        authors: Set<PubKey>,
+        kinds: List<Int>,
+    ): Map<RelayUrl, List<ReqFilter>> {
+        if (authors.isEmpty()) return emptyMap()
+
+        val relays = discoveryRelays().sorted().take(config.maxDiscoveryRelays)
+        if (relays.isEmpty()) return emptyMap()
+
+        val perRelay = mutableMapOf<RelayUrl, MutableList<String>>()
+        val spread = minOf(config.discoveryRedundancy, relays.size)
+        for ((index, author) in authors.sortedBy { it.hex }.withIndex()) {
+            for (step in 0 until spread) {
+                val relay = relays[(index + step) % relays.size]
+                perRelay.getOrPut(relay) { mutableListOf() } += author.hex
+            }
+        }
+
+        return perRelay.mapValues { (_, assigned) ->
+            listOf(ReqFilter(authors = assigned.sorted(), kinds = kinds))
+        }
+    }
+}

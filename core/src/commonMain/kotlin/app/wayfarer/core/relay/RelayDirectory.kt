@@ -1,0 +1,294 @@
+package app.wayfarer.core.relay
+
+import app.wayfarer.core.model.DiscoveryReason
+import app.wayfarer.core.model.DiscoverySource
+import app.wayfarer.core.model.PendingRelay
+import app.wayfarer.core.model.PubKey
+import app.wayfarer.core.model.RelayDirectorySnapshot
+import app.wayfarer.core.model.RelayGrant
+import app.wayfarer.core.model.RelayUrl
+import app.wayfarer.core.util.Clock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * The single authority on which relays this app may talk to.
+ *
+ * Deny by default: [readable] and [writable] return only relays the user has
+ * granted, and every rejected relay is recorded in [pending] together with the
+ * reason it was wanted. Nothing in the app is allowed to build a relay set for
+ * the transport except by passing it through here first.
+ *
+ * The gate is enforced a second time at the socket layer — see
+ * `GatedWebsocketBuilder` in the `nostr-quartz` module, which refuses to open a
+ * connection to any URL this directory does not approve. That is deliberate
+ * belt-and-braces: a routing bug upstream still cannot leak a connection.
+ *
+ * **The list belongs to whoever is signed in.** It is not one permanent set of
+ * permissions for the device — see [scopeTo].
+ */
+class RelayDirectory(
+    private val clock: Clock,
+    initial: RelayDirectorySnapshot = RelayDirectorySnapshot(),
+    private val persistence: RelayDirectoryStore? = null,
+) : RelayAccessPolicy {
+    private val writeLock = Mutex()
+
+    private val state = MutableStateFlow(initial)
+
+    /** Whose list this currently is, or null for a session with nobody signed in. */
+    private var owner: PubKey? = null
+
+    /** Grants only, sorted by display name, for the settings screen. */
+    val snapshot: StateFlow<RelayDirectorySnapshot> = state.asStateFlow()
+
+    val grants: Map<RelayUrl, RelayGrant> get() = state.value.grants
+
+    val pending: Map<RelayUrl, PendingRelay> get() = state.value.pending
+
+    override fun isApproved(url: RelayUrl): Boolean = state.value.grants[url]?.isApproved == true
+
+    override fun canRead(url: RelayUrl): Boolean = state.value.grants[url]?.read == true
+
+    override fun canWrite(url: RelayUrl): Boolean = state.value.grants[url]?.write == true
+
+    /**
+     * Narrows [candidates] to the relays approved for reading, recording every
+     * rejected one as pending with [reason].
+     *
+     * The recording is the point: the pending list in settings is populated as a
+     * side effect of the app doing its normal outbox routing, so the user sees
+     * exactly the relays their follows are actually asking them to reach.
+     */
+    suspend fun readable(
+        candidates: Collection<RelayUrl>,
+        reason: DiscoveryReason,
+    ): Set<RelayUrl> = partition(candidates, reason) { it.read }
+
+    /** Narrows [candidates] to the relays approved for publishing. See [readable]. */
+    suspend fun writable(
+        candidates: Collection<RelayUrl>,
+        reason: DiscoveryReason,
+    ): Set<RelayUrl> = partition(candidates, reason) { it.write }
+
+    private suspend fun partition(
+        candidates: Collection<RelayUrl>,
+        reason: DiscoveryReason,
+        permitted: (RelayGrant) -> Boolean,
+    ): Set<RelayUrl> {
+        if (candidates.isEmpty()) return emptySet()
+
+        val current = state.value
+        val allowed = LinkedHashSet<RelayUrl>(candidates.size)
+        var unknown: MutableSet<RelayUrl>? = null
+
+        for (url in candidates) {
+            val grant = current.grants[url]
+            when {
+                grant != null && permitted(grant) -> allowed += url
+                // Known but not permitted for this direction, or explicitly denied:
+                // an existing decision, so nothing to ask the user about again.
+                grant != null || url in current.denied -> Unit
+                else -> (unknown ?: mutableSetOf<RelayUrl>().also { unknown = it }) += url
+            }
+        }
+
+        unknown?.let { note(it, reason) }
+        return allowed
+    }
+
+    /** Records relays as pending without asking to use them right now. */
+    suspend fun note(
+        urls: Collection<RelayUrl>,
+        reason: DiscoveryReason,
+    ) {
+        if (urls.isEmpty()) return
+        mutate { current ->
+            val now = clock.nowSeconds()
+            val pending = current.pending.toMutableMap()
+            var changed = false
+            for (url in urls) {
+                if (url in current.grants || url in current.denied) continue
+                val existing = pending[url]
+                val updated =
+                    existing?.merge(setOf(reason), now)
+                        ?: PendingRelay(url, setOf(reason), firstSeenAt = now, lastSeenAt = now)
+                if (updated != existing) {
+                    pending[url] = updated
+                    changed = true
+                }
+            }
+            if (changed) current.copy(pending = pending) else current
+        }
+    }
+
+    /**
+     * Grants [url] the given permissions and clears it from the pending queue.
+     * Setting both flags false is a revocation, not a denial: the relay returns
+     * to pending only if something asks for it again.
+     */
+    suspend fun approve(
+        url: RelayUrl,
+        read: Boolean,
+        write: Boolean,
+    ) = mutate { current ->
+        val grants = current.grants.toMutableMap()
+        if (read || write) {
+            grants[url] = RelayGrant(url, read, write)
+        } else {
+            grants.remove(url)
+        }
+        current.copy(
+            grants = grants,
+            pending = current.pending - url,
+            denied = current.denied - url,
+        )
+    }
+
+    /** Revokes any grant and remembers the rejection so it stops re-appearing. */
+    suspend fun deny(url: RelayUrl) =
+        mutate { current ->
+            current.copy(
+                grants = current.grants - url,
+                pending = current.pending - url,
+                denied = current.denied + url,
+            )
+        }
+
+    /**
+     * Stars or unstars a relay.
+     *
+     * Not a permission: starring changes nothing about what may be fetched, so
+     * unlike the mutators around it this one has no bearing on routing and must
+     * not be treated as a reason to reload anything.
+     */
+    suspend fun setFavourite(
+        url: RelayUrl,
+        favourite: Boolean,
+    ) = mutate { current ->
+        current.copy(favourites = if (favourite) current.favourites + url else current.favourites - url)
+    }
+
+    /** Forgets a relay entirely — no grant, no pending entry, no denial. */
+    suspend fun forget(url: RelayUrl) =
+        mutate { current ->
+            current.copy(
+                grants = current.grants - url,
+                pending = current.pending - url,
+                denied = current.denied - url,
+            )
+        }
+
+    /** Seeds the pending queue with the app's suggested starting relays. */
+    suspend fun suggest(urls: Collection<RelayUrl>) = note(urls, DiscoveryReason(DiscoverySource.BOOTSTRAP))
+
+    /**
+     * Records the relays a NIP-19 pointer named — an `nprofile`'s hints.
+     *
+     * Queued rather than used: a hint is a claim made by whoever wrote the link,
+     * and this app has exactly one way to start talking to a relay.
+     */
+    suspend fun noteHint(
+        urls: Collection<RelayUrl>,
+        namedBy: String,
+    ) = note(urls, DiscoveryReason(DiscoverySource.EVENT_HINT, "named by the link to $namedBy"))
+
+    /**
+     * Points the directory at [account]'s list, or at a fresh one for a session
+     * with nobody signed in.
+     *
+     * Relay permissions are a record of consent given by a person, not a
+     * property of the handset. They used to be one list for the device, kept
+     * forever and shared by every account that ever signed in — so somebody
+     * logging in as themselves inherited whatever the last user of the phone had
+     * allowed, a new account started out already talking to relays it had never
+     * been asked about, and logging out left the whole list behind. The follow
+     * list kept on this phone has always been keyed by its owner, and this is
+     * the same rule for the same reason.
+     *
+     * A guest gets a list that lives for the session and is never written down.
+     * Reading without an account is supported, so the permissions have to work;
+     * persisting them would be keeping a consent record for nobody, and would
+     * hand the next session relays it never approved.
+     */
+    suspend fun scopeTo(account: PubKey?) {
+        writeLock.withLock {
+            owner = account
+            state.value = persistence?.load(account) ?: RelayDirectorySnapshot()
+        }
+    }
+
+    /**
+     * Erases [account]'s permissions from this device.
+     *
+     * What logging out does, as distinct from switching accounts. A grant is
+     * standing permission to open a socket to somebody's server; leaving one
+     * behind for an account that has left means the next person to sign in with
+     * that key resumes talking to relays without being asked, on a phone that
+     * may not be theirs any more.
+     */
+    suspend fun forget(account: PubKey) {
+        persistence?.delete(account)
+        if (owner == account) scopeTo(null)
+    }
+
+    private suspend fun mutate(block: (RelayDirectorySnapshot) -> RelayDirectorySnapshot) {
+        val updated =
+            writeLock.withLock {
+                val next = block(state.value)
+                if (next == state.value) return
+                state.value = next
+                next
+            }
+        persistence?.save(owner, updated)
+    }
+}
+
+/**
+ * The read side of [RelayDirectory], for components that only need the verdict.
+ *
+ * Three questions rather than one, because the user answers three. Read and
+ * write are granted separately — "Get posts" is not "and send mine" — so a
+ * component that knows which direction it is about should be able to ask about
+ * that direction. [isApproved] is the union, and answers only "may this app
+ * talk to this relay at all"; it is the right question for opening a socket,
+ * which carries both directions, and the wrong one for deciding whether to send.
+ *
+ * Deliberately not a `fun interface` any more. A SAM lambda can only implement
+ * [isApproved], which would leave the other two to a default that agrees with it
+ * — and a default that says "yes, you may write" because the relay is readable
+ * is the exact confusion this interface now exists to prevent.
+ */
+interface RelayAccessPolicy {
+    /** Whether any connection to [url] is permitted. Read or write, either one. */
+    fun isApproved(url: RelayUrl): Boolean
+
+    /** Whether [url] may be asked for events. */
+    fun canRead(url: RelayUrl): Boolean
+
+    /** Whether events may be sent to [url]. */
+    fun canWrite(url: RelayUrl): Boolean
+}
+
+/**
+ * Persistence for the relay directory, per account.
+ *
+ * [owner] is the account the list belongs to, or null for a session with nobody
+ * signed in. A guest's permissions are deliberately not durable — see
+ * [RelayDirectory.scopeTo] — so an implementation is expected to keep nothing at
+ * all for a null owner.
+ */
+interface RelayDirectoryStore {
+    suspend fun load(owner: PubKey?): RelayDirectorySnapshot
+
+    suspend fun save(
+        owner: PubKey?,
+        snapshot: RelayDirectorySnapshot,
+    )
+
+    /** Erases [owner]'s record. Logging out is not a pause, it is a departure. */
+    suspend fun delete(owner: PubKey)
+}

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Two permissions, and both are asked for a visible reason. INTERNET is
+        talking to the relays the user has approved, and fetching pictures from
+        the media hosts the user has allowed — two separate permission lists, and
+        nothing is contacted that is not on one of them. There is no analytics, no
+        push service and no media upload. CAMERA is only ever used by
+        QrScanActivity, is requested at the moment that screen opens, and is
+        declared optional so a device without a camera can still install the app:
+        the scan button is hidden there instead.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!--
+        NIP-55. Without this declaration queryIntentActivities returns nothing on
+        API 30+, and "sign in with a signer app" silently offers itself and then
+        does nothing.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="nostrsigner" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".WayfarerApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Wayfarer">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Wayfarer"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Not exported: nothing outside this app may start the camera through
+            it. It is a plain activity rather than a screen in the main one so the
+            camera permission is asked for in context and CameraX stays out of the
+            rest of the UI.
+        -->
+        <activity
+            android:name=".platform.QrScanActivity"
+            android:exported="false"
+            android:label="Scan a code"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Wayfarer" />
+    </application>
+</manifest>
